@@ -1,5 +1,7 @@
 """Optional Mail Merge scope for explicit unit and lease assignments."""
 
+from collections import defaultdict
+
 import frappe
 from frappe import _
 from frappe.utils import cstr, getdate, today
@@ -48,6 +50,7 @@ def recipient_scope(doctype, filters):
 		"filters": criteria,
 		"fields": ["wohnung", "bis"] if lease else [],
 		"location_key": location_key,
+		"check_user_permissions_per_document": not lease and _has_virtual_unit_link_permissions(),
 		"locations": locations,
 		# Open-ended leases have no end date. Keep this OR separate from text search.
 		"accept": (lambda row: not row.bis or getdate(row.bis).isoformat() >= date)
@@ -62,10 +65,7 @@ def _unit_locations(property_id, labels, *, linked):
 	unit_filters = None
 	inside = ancestors = set()
 	if property_id:
-		left, right = frappe.db.get_value("Immobilie", property_id, ["lft", "rgt"])
-		inside = set(frappe.get_all("Immobilie", filters={"lft": [">=", left], "rgt": ["<=", right]}, pluck="name"))
-		ancestors = set(frappe.get_all("Immobilie", filters={"lft": ["<=", left], "rgt": [">=", right]}, pluck="name"))
-		ancestors -= inside
+		inside, ancestors = _property_tree_scope(property_id)
 		unit_filters = [["immobilie", "in", list(inside)], ["immobilie_knoten", "in", list(inside)]]
 
 	# Resolve assignment independently of permissions on the linked unit. The
@@ -88,15 +88,41 @@ def _unit_locations(property_id, labels, *, linked):
 	return locations
 
 
+def _property_tree_scope(property_id):
+	parents = {}
+	children = defaultdict(list)
+	for node in frappe.get_all("Immobilie", fields=["name", "parent_immobilie"]):
+		parents[node.name] = node.parent_immobilie
+		children[node.parent_immobilie].append(node.name)
+
+	descendants = set()
+	pending = [property_id]
+	while pending:
+		node = pending.pop()
+		if node not in descendants:
+			descendants.add(node)
+			pending.extend(children[node])
+
+	ancestors = set()
+	node = parents.get(property_id)
+	while node and node not in ancestors and node not in descendants:
+		ancestors.add(node)
+		node = parents.get(node)
+	return descendants, ancestors
+
+
+def _has_virtual_unit_link_permissions():
+	user_permissions = frappe.permissions.get_user_permissions(frappe.session.user)
+	return any(
+		field.is_virtual and not field.ignore_user_permissions
+		and frappe.permissions.get_allowed_docs_for_doctype(user_permissions.get(field.options, []), "Wohnung")
+		for field in frappe.get_meta("Wohnung").get_link_fields()
+	)
+
+
 def _readable_linked_units(or_filters):
-	if not frappe.has_permission("Wohnung", "read"):
-		return set()
-	virtual_links = {
-		field.options for field in frappe.get_meta("Wohnung").get_link_fields()
-		if field.is_virtual and not field.ignore_user_permissions
-	}
-	# Frappe 16's list permission filters cannot query virtual link columns.
-	# Keep these auxiliary labels private when such a filter would be needed.
-	if virtual_links.intersection(frappe.permissions.get_user_permissions(frappe.session.user)):
+	# Frappe 16's list filters cannot query virtual link columns. When this
+	# auxiliary list requires such filters, keep the linked labels private.
+	if not frappe.has_permission("Wohnung", "read") or _has_virtual_unit_link_permissions():
 		return set()
 	return set(frappe.get_list("Wohnung", pluck="name", or_filters=or_filters, limit=0))

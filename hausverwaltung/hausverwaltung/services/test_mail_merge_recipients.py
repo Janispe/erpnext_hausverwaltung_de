@@ -17,13 +17,18 @@ def insert_fixture(doctype, name, **fields):
 class TestMailMergeScope(IntegrationTestCase):
 	def test_property_tree_and_lease_reference(self):
 		prefix = frappe.generate_hash(length=8)
-		bounds = frappe.get_all("Immobilie", pluck="rgt", order_by="rgt desc", limit_page_length=1)
-		boundary = 1 + ((bounds[0] or 0) if bounds else 0)
-		house = insert_fixture("Immobilie", f"{prefix}-Haus", lft=boundary, rgt=boundary + 3)
-		part = insert_fixture(
-			"Immobilie", f"{prefix}-Vorderhaus", parent_immobilie=house.name, lft=boundary + 1, rgt=boundary + 2,
-		)
-		other = insert_fixture("Immobilie", f"{prefix}-Nachbar", lft=boundary + 4, rgt=boundary + 5)
+		def make_property(label, **fields):
+			address = frappe.get_doc({
+				"doctype": "Address", "address_title": f"{prefix}-{label}", "address_type": "Other",
+				"address_line1": "Teststraße 1", "city": "Berlin", "country": "Germany",
+			}).insert()
+			return frappe.get_doc({
+				"doctype": "Immobilie", "bezeichnung": f"{prefix}-{label}", "adresse": address.name, **fields,
+			}).insert()
+
+		house = make_property("Haus", is_group=1)
+		part = make_property("Vorderhaus", parent_immobilie=house.name)
+		other = make_property("Nachbar")
 		unit = insert_fixture("Wohnung", f"{prefix}-1", immobilie=house.name, immobilie_knoten=part.name)
 		main_unit = insert_fixture("Wohnung", f"{prefix}-2", immobilie=house.name)
 		other_unit = insert_fixture("Wohnung", f"{prefix}-3", immobilie=other.name)
@@ -52,3 +57,11 @@ class TestMailMergeScope(IntegrationTestCase):
 		all_states = recipient_scope("Mietvertrag", {"property": part.name, "lease_state": "all"})
 		self.assertIsNone(all_states["accept"])
 		self.assertIsNone(recipient_scope("Note", {}))
+
+
+	def test_computed_unit_leases_can_be_read_during_permission_check(self):
+		prefix = frappe.generate_hash(length=8)
+		unit = insert_fixture("Wohnung", f"{prefix}-Wohnung")
+		lease = insert_fixture("Mietvertrag", f"{prefix}-Vertrag", wohnung=unit.name, von="2025-01-01")
+		children = frappe.get_lazy_doc("Wohnung", unit.name).get_all_children(include_computed=True)
+		self.assertEqual([row.mietvertrag for row in children if row.parentfield == "mietvertraege_alle"], [lease.name])
