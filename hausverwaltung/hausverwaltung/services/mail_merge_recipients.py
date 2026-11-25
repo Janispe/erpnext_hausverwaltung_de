@@ -71,13 +71,13 @@ def _unit_locations(property_id, labels, *, linked):
 	# Resolve assignment independently of permissions on the linked unit. The
 	# picker checks permissions on every iteration object, and unit labels are
 	# exposed only when the unit itself is readable.
-	readable_units = _readable_linked_units(unit_filters) if linked else None
+	can_read_linked_units = not linked or frappe.has_permission("Wohnung", "read")
 	locations = {}
 	for unit in frappe.get_all("Wohnung", fields=fields, or_filters=unit_filters):
 		if property_id and unit.immobilie not in inside:
 			if unit.immobilie not in ancestors or unit.immobilie_knoten not in inside:
 				continue
-		if readable_units is not None and unit.name not in readable_units:
+		if linked and (not can_read_linked_units or not frappe.has_permission("Wohnung", "read", doc=unit.name)):
 			locations[unit.name] = ()
 			continue
 		locations[unit.name] = (
@@ -118,11 +118,3 @@ def _has_virtual_unit_link_permissions():
 		and frappe.permissions.get_allowed_docs_for_doctype(user_permissions.get(field.options, []), "Wohnung")
 		for field in frappe.get_meta("Wohnung").get_link_fields()
 	)
-
-
-def _readable_linked_units(or_filters):
-	# Frappe 16's list filters cannot query virtual link columns. When this
-	# auxiliary list requires such filters, keep the linked labels private.
-	if not frappe.has_permission("Wohnung", "read") or _has_virtual_unit_link_permissions():
-		return set()
-	return set(frappe.get_list("Wohnung", pluck="name", or_filters=or_filters, limit=0))

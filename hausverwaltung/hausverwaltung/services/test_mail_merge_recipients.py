@@ -65,3 +65,42 @@ class TestMailMergeScope(IntegrationTestCase):
 		lease = insert_fixture("Mietvertrag", f"{prefix}-Vertrag", wohnung=unit.name, von="2025-01-01")
 		children = frappe.get_lazy_doc("Wohnung", unit.name).get_all_children(include_computed=True)
 		self.assertEqual([row.mietvertrag for row in children if row.parentfield == "mietvertraege_alle"], [lease.name])
+
+
+	def test_lease_location_respects_permissions_on_computed_unit_links(self):
+		prefix = frappe.generate_hash(length=8)
+		house = insert_fixture("Immobilie", f"{prefix}-Haus", bezeichnung=f"{prefix}-Haus")
+		unit = insert_fixture(
+			"Wohnung", f"{prefix}-Wohnung", immobilie=house.name, name__lage_in_der_immobilie="Vorderhaus",
+		)
+		lease_customer = insert_fixture("Customer", f"{prefix}-Vertragskunde")
+		allowed_customer = insert_fixture("Customer", f"{prefix}-Erlaubter-Kunde")
+		lease = insert_fixture(
+			"Mietvertrag", f"{prefix}-Vertrag", wohnung=unit.name, kunde=lease_customer.name, von="2025-01-01",
+		)
+		user = frappe.get_doc({
+			"doctype": "User",
+			"email": f"{prefix}@example.invalid",
+			"first_name": "Serienbrief Test",
+			"send_welcome_email": 0,
+			"roles": [{"role": "Hausverwalter"}],
+		}).insert()
+		frappe.get_doc({
+			"doctype": "User Permission",
+			"user": user.name,
+			"allow": "Customer",
+			"for_value": allowed_customer.name,
+			"apply_to_all_doctypes": 0,
+			"applicable_for": "Wohnung",
+		}).insert()
+
+		previous_user = frappe.session.user
+		try:
+			frappe.set_user(user.name)
+			self.assertTrue(frappe.has_permission("Mietvertrag", "read", doc=lease.name))
+			self.assertFalse(frappe.has_permission("Wohnung", "read", doc=unit.name))
+			scope = recipient_scope("Mietvertrag", {"property": house.name})
+			self.assertIn(["wohnung", "in", [unit.name]], scope["filters"])
+			self.assertEqual(scope["locations"], {unit.name: ()})
+		finally:
+			frappe.set_user(previous_user)
