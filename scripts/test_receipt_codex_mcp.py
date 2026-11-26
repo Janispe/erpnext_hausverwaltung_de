@@ -25,7 +25,7 @@ class TestReceiptCodexMcp(unittest.TestCase):
 		self.paperclip.request.return_value = ({"status": "todo"}, {})
 		self.job = ReceiptJob(self.erp, self.paperclip, "test-token", "assigned-agent")
 
-	def stage(self, step):
+	def stage(self, step, **additional_task_fields):
 		with io.BytesIO() as output:
 			Image.new("RGB", (40, 24), "red").save(output, "PNG")
 			content = base64.b64encode(output.getvalue()).decode()
@@ -33,7 +33,7 @@ class TestReceiptCodexMcp(unittest.TestCase):
 			"status": "Running", "task": {
 				"step": step, "page_limit": 5, "original": {"extension": "png", "content": content},
 				"regions": [[1, 500, 0, 1000, 1000]], "system": "Synthetic", "context": {"upload_notiz": "Notiz"},
-				"accounting_context": {},
+				"accounting_context": {}, **additional_task_fields,
 			},
 		}}, {})
 		return self.job.next_step()
@@ -107,6 +107,20 @@ class TestReceiptCodexMcp(unittest.TestCase):
 		self.assertEqual(crop["mimeType"], "image/png")
 		with Image.open(io.BytesIO(base64.b64decode(crop["data"]))) as image:
 			self.assertGreater(image.getpixel((2, 2))[0], 190)
+
+	def test_upload_question_can_read_pages_and_saves_answer_only_to_erp(self):
+		task = self.stage(0, mode="upload_question")
+		self.assertEqual(task["structuredContent"]["mode"], "upload_question")
+		self.assertEqual(self.job.call("read_upload_question_pages", {"pages": [1]})["structuredContent"], {"pages": [1]})
+		with self.assertRaises(ValueError):
+			self.job.call("submit_inventory", {"inventory": {}})
+		self.erp.request.return_value = ({"message": SCOPE | {"status": "Answered"}}, {})
+		answer = "Diese vertrauliche synthetische Antwort steht nur in ERPNext."
+		self.assertEqual(self.job.call("answer_upload_question", {"answer": answer}), {"status": "Answered"})
+		self.assertEqual(self.erp.request.call_args.kwargs["data"], {"step": 0, "answer": answer})
+		self.assertEqual(self.paperclip.request.call_args.kwargs["data"], {
+			"status": "done", "comment": "Rückfrage beantwortet. Die Antwort steht in ERPNext.",
+		})
 
 	def test_raw_codex_events_do_not_reach_paperclip(self):
 		for item_type in ("mcp_tool_call", "reasoning", "agent_message"):

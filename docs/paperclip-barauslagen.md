@@ -184,11 +184,19 @@ Wiederaufnahme bleibt der betroffene Bon zur Klärung markiert. Die
 Buchungsfreigabe erfolgt anschließend separat in **Buchungs-Inbox**.
 
 Mit **Bon prüfen** kann jeder gespeicherte Bon einzeln geöffnet werden.
-**Hinweise überspringen und manuell prüfen** blendet die Analysehinweise
-nur im Dialog aus. Fehlende Pflichtangaben werden dort ergänzt. Eine offene
-Zuschnittfrage oder ein ausstehender Lieferantenvorschlag sperrt die
-Freigabe des betroffenen Bons. Die übrigen gespeicherten Bons können
-weiter geprüft werden.
+**Hinweise überspringen und manuell prüfen** erlaubt der Buchhaltung,
+einen vorhandenen Bon trotz einer offenen KI-Frage zum Zuschnitt oder
+Lieferantenvorschlag am Original zu prüfen und danach zu buchen. Wähle einen
+gültigen Lieferanten, ergänze die Pflichtangaben und bestätige Endbetrag
+und Währung am Original. Bei dieser manuellen Freigabe wird das private
+Original des Uploads als Beleg angehängt. Prüfung und Freigabe werden der
+konkreten Bonfassung zugeordnet.
+
+**Bon-Uploads → Rückfrage zum Stapel** sendet eine Frage zum gesamten
+Foto oder PDF an denselben Paperclip-Mitarbeiter. Frage, Status, Antwort
+und Link zum Paperclip-Auftrag stehen unter dem Upload. Folgefragen
+erhalten den bisherigen Verlauf. Der Rückfragenlauf kann Vorschläge
+und Buchungen nicht bearbeiten.
 
 Für einen synthetischen Inferenzlauf `CODEX_ROLLOUT_TRACE_ROOT` vorübergehend
 auf ein privates Verzeichnis setzen. Vergleiche die Zell-ID der

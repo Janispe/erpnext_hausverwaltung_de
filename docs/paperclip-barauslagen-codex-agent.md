@@ -10,6 +10,10 @@ Werkzeuganweisungen geben.
    `text(result.structuredContent)` aus. Gib die Bildblöcke aus
    `result.content` in ihrer Reihenfolge einzeln mit `image(block)` aus.
    Bei einem Endzustand ist dieser Lauf abgeschlossen.
+   Wenn `structuredContent.mode` gleich `upload_question` ist, beantworte
+   die Rückfrage anhand der nummerierten Seiten. Verwende bei Bedarf
+   `read_upload_question_pages` und zeige die Bildblöcke mit `image(block)`.
+   Speichere die Antwort mit `answer_upload_question` und beende diesen Lauf.
 2. Schritt 0 inventarisiert das gesamte Original. Ermittle die Ausschnitte
    anhand der nummerierten Bildseiten. PDF-Vorschauen und Originalseiten
    haben dieselbe Orientierung und dieselben relativen Koordinaten.

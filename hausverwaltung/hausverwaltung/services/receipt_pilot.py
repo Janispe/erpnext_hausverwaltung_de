@@ -280,10 +280,10 @@ def verified_original(doc, *, for_update: bool = False):
 	return original, content
 
 
-def validate_booking_confirmation(doc, rows: list[dict], *, eur_confirmed: bool) -> None:
+def validate_booking_confirmation(doc, rows: list[dict], *, eur_confirmed: bool, manual_review=False) -> None:
 	data = json.loads(doc.extracted_data or "{}")
 	currency = data.get("waehrung")
-	if currency and currency != "EUR":
+	if currency and currency != "EUR" and not manual_review:
 		frappe.throw("Fremdwährungsbelege bitte außerhalb des Barauslagen-Piloten erfassen.")
 	if not eur_confirmed:
 		frappe.throw("Bitte bestätigen, dass der Originalbeleg in EUR ausgestellt ist.")

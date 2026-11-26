@@ -173,17 +173,20 @@ def _booking(values):
 		"beleg_brutto_bestaetigt": str(total),
 		"beleg_eur_bestaetigt": cockpit._as_bool(values.get("beleg_eur_bestaetigt")),
 		"positionen": positions,
+		**({"manual_review": True} if values.get("manual_review") is True else {}),
 	}
 
 
 def _plan(receipt, booking):
 	"""Resolve the booking inputs without inserting or submitting an ERPNext voucher."""
-	receipt_batch.require_bookable(receipt)
+	manual_review = bool(receipt.receipt_upload and booking.get("manual_review"))
+	receipt_batch.require_bookable(receipt, manual_review=manual_review)
 	context = pilot.review_context(receipt)
 	if context["fragen"]:
 		frappe.throw(context["fragen"][0])
 	try:
-		original, _ = pilot.verified_original(receipt, for_update=True)
+		verify_file = receipt_batch.verified_upload_original if manual_review else pilot.verified_original
+		original, _ = verify_file(receipt, for_update=True)
 	except (OSError, ValueError, frappe.DoesNotExistError):
 		frappe.throw("Der private Originalbeleg fehlt oder wurde verändert.")
 	original.check_permission("read")
@@ -197,7 +200,8 @@ def _plan(receipt, booking):
 		note = f"Privat vorgestreckt von {context['person']}"
 		params["zahlungsbemerkung"] = "\n".join(filter(None, (note, booking["zahlungsbemerkung"])))
 	request = cockpit._purchase_invoice_request_context(params, receipt=receipt)
-	pilot.validate_booking_confirmation(receipt, request["rows"], eur_confirmed=booking["beleg_eur_bestaetigt"])
+	pilot.validate_booking_confirmation(receipt, request["rows"],
+		eur_confirmed=booking["beleg_eur_bestaetigt"], manual_review=manual_review)
 	pi = cockpit._prepare_cockpit_purchase_invoice(request, params, receipt=True)
 	pi.set_missing_values(for_validate=True)
 	pi.set_taxes_and_charges()

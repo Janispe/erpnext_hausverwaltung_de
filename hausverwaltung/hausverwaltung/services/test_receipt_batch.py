@@ -288,6 +288,51 @@ class TestReceiptBatch(IntegrationTestCase):
 		fallback, = batch._inventory({"bons": [], "leere_seiten": list(range(1, 21))}, 20, None)
 		self.assertEqual(fallback["regions"], [[1, 0, 0, 1000, 1000]])
 
+	def test_upload_question_is_idempotent_and_keeps_one_scoped_thread(self):
+		upload = self.upload(self.fixture(is_pdf=True), is_pdf=True)
+		other_upload = self.upload(self.fixture())
+		first_id = str(uuid.uuid4())
+		question = "Wie viele Bons sind auf Seite 2 zu sehen?"
+		with self.assertRaises(frappe.PermissionError):
+			batch.ask_upload_question(upload, first_id, question)
+		with patch.dict(frappe.conf, {"hv_receipt_codex": 1}):
+			for _ in range(2):
+				self.assertEqual(batch.ask_upload_question(upload, first_id, question), {"name": first_id})
+			with self.assertRaises(frappe.ValidationError):
+				batch.ask_upload_question(other_upload, first_id, question)
+			self.assertEqual(frappe.db.count(batch.JOB, {"upload": upload, "is_upload_question": 1}), 1)
+
+			with self.scope(first_id):
+				task = batch.codex_next_step()["task"]
+				self.assertEqual(task["mode"], batch.UPLOAD_QUESTION_MODE)
+				self.assertEqual(task["context"]["rueckfrage"], question)
+				self.assertEqual(task["context"]["verlauf"], [])
+				self.assertEqual(task["original"]["extension"], "pdf")
+				self.assertEqual(batch.codex_catalogue(), [])
+				with self.assertRaises(frappe.ValidationError):
+					batch.submit_step(0, result={"bons": [], "leere_seiten": [1, 2, 3]})
+			with self.scope(first_id):
+				with self.assertRaises(frappe.PermissionError):
+					batch.submit_step(0, answer="Antwort aus einem alten Lauf")
+				batch.codex_next_step()
+				self.assertEqual(batch.submit_step(0, answer="Ein Bon setzt sich auf Seite 2 fort.")["status"], "Answered")
+				self.assertEqual(batch.submit_step(0, answer="Darf die Antwort nicht ersetzen")["status"], "Answered")
+			second_id = batch.ask_upload_question(upload, str(uuid.uuid4()), "Und auf Seite 3?")["name"]
+			with self.scope(second_id):
+				self.assertEqual(batch.codex_next_step()["task"]["context"]["verlauf"], [{
+					"question": question, "answer": "Ein Bon setzt sich auf Seite 2 fort.",
+				}])
+				self.assertEqual(batch.submit_step(0, failed=True)["status"], "AnalysisError")
+			other_id = batch.ask_upload_question(other_upload, str(uuid.uuid4()), "Was ist hier zu sehen?")["name"]
+			with self.scope(other_id):
+				self.assertEqual(batch.codex_next_step()["task"]["context"]["verlauf"], [])
+			record = next(row for row in batch.list_uploads() if row.name == upload)
+			self.assertTrue(record.can_ask)
+			saved = next(job for job in record.jobs if job["name"] == first_id)
+			self.assertEqual((saved["question"], saved["answer"]), (question, "Ein Bon setzt sich auf Seite 2 fort."))
+			self.assertFalse(frappe.db.exists(batch.pilot.PROPOSAL, {"receipt_upload": upload}))
+			self.assertEqual(frappe.db.get_value(batch.JOB, upload, "status"), "Queued")
+
 	def test_account_comparison_verifies_sources_and_company(self):
 		suffix = uuid.uuid4().hex[:10]
 		company = frappe.get_all("Company", pluck="name", limit=1)[0]
@@ -600,7 +645,7 @@ class TestReceiptBatch(IntegrationTestCase):
 			with self.assertRaises(frappe.ValidationError):
 				batch.require_bookable(frappe.get_doc(batch.pilot.PROPOSAL, changed_bon["proposal"]))
 
-	def test_transcription_crop_question_blocks_booking(self):
+	def test_transcription_crop_question_requires_manual_review(self):
 		name = self.upload(self.fixture())
 		with self.scope(name):
 			self.submit(batch.next_step()["task"], {
@@ -612,5 +657,10 @@ class TestReceiptBatch(IntegrationTestCase):
 		result, = json.loads(frappe.db.get_value(batch.JOB, name, "results"))
 		self.assertEqual(result["data"]["analysis"]["question"], "Der untere Rand ist abgeschnitten.")
 		self.assertIn("Händlerschreibweise prüfen.", result["data"]["warnings"])
+		proposal = frappe.get_doc(batch.pilot.PROPOSAL, result["proposal"])
 		with self.assertRaisesRegex(frappe.ValidationError, "Zuschnitt oder die Aufteilung"):
-			receipt_action._plan(frappe.get_doc(batch.pilot.PROPOSAL, result["proposal"]), {})
+			receipt_action._plan(proposal, {})
+		batch.require_bookable(proposal, manual_review=True)
+		original, _ = batch.verified_upload_original(proposal)
+		self.assertEqual(original.attached_to_name, name)
+		self.assertNotEqual(original.file_url, proposal.file_url)

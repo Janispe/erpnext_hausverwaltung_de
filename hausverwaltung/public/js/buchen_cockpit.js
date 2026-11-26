@@ -720,6 +720,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		},
 	];
 
+	let manual_receipt_review = false;
 	const dialog = new frappe.ui.Dialog({
 		title: opts._receipt ? __("Bon prüfen") : __("Ausgabe erfassen"),
 		size: "extra-large",
@@ -727,7 +728,9 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		primary_action_label: opts._receipt ? __("Freigeben und buchen") : __("Buchen"),
 		primary_action(values) {
 			if (opts._receipt) {
-				if (opts._receipt_blocker || !opts._receipt_review) return;
+				if (opts._receipt_blocker || !opts._receipt_review ||
+					(opts._receipt_manual_reason && !manual_receipt_review)) return;
+				values._receipt_manual_review = manual_receipt_review;
 				values._receipt_context = Object.fromEntries(opts._receipt_context_fields.map(({ fieldname }) =>
 					[fieldname, values[fieldname] || ""]));
 				values.zahlung_sofort = 1;
@@ -782,18 +785,26 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		const escape = frappe.utils.escape_html;
 		const list = (items) => `<ul>${items.map((item) => `<li>${escape(item)}</li>`).join("")}</ul>`;
 		const notes = dialog.fields_dict.receipt_review_notes.$wrapper;
+		const manual_reason = !opts._receipt_blocker && opts._receipt_manual_reason;
 		notes.html(`${opts._receipt_blocker ? `<p class="text-danger">${escape(opts._receipt_blocker)}</p>` : ""}
 			${opts._receipt_questions?.length ? `<p><strong>${__("Pflichtangaben klären")}</strong></p>
 				${list(opts._receipt_questions)}` : ""}
-			${opts._warnings?.length ? `<div class="hv-receipt-hints"><p><strong>${__("Hinweise zur KI-Analyse")}</strong></p>
-				${list(opts._warnings)}
+			${manual_reason || opts._warnings?.length ? `<div class="hv-receipt-hints"><p><strong>${__("Hinweise zur KI-Analyse")}</strong></p>
+				${manual_reason ? `<p>${escape(manual_reason)}</p>` : ""}
+				${opts._warnings?.length ? list(opts._warnings) : ""}
 				<p><button type="button" class="btn btn-default btn-sm hv-skip-receipt-hints">
 					${__("Hinweise überspringen und manuell prüfen")}</button></p></div>` : ""}`);
 		notes.find(".hv-skip-receipt-hints").on("click", () => {
 			notes.find(".hv-receipt-hints").hide();
+			if (manual_reason) {
+				manual_receipt_review = true;
+				$("<p>").text(__("Prüfe diesen Bon am Original. Bei der Buchung wird das Original des Sammeluploads hinterlegt."))
+					.appendTo(notes);
+				dialog.get_primary_btn().prop("disabled", false);
+			}
 			dialog.fields_dict.lieferant.$input.trigger("focus");
 		});
-		if (opts._receipt_blocker) dialog.get_primary_btn().prop("disabled", true);
+		if (opts._receipt_blocker || manual_reason) dialog.get_primary_btn().prop("disabled", true);
 	}
 
 	if (has_explicit_defaults) {
@@ -1122,6 +1133,7 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 		beleg_brutto_bestaetigt: values.beleg_brutto_bestaetigt,
 		beleg_eur_bestaetigt: values.beleg_eur_bestaetigt,
 		positionen: JSON.stringify(rows),
+		...(values._receipt_manual_review ? { manual_review: true } : {}),
 	};
 	const args = {
 		...booking,

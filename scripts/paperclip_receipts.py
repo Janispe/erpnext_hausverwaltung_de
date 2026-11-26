@@ -14,6 +14,7 @@ BATCH_API = "/api/method/hausverwaltung.hausverwaltung.services.receipt_batch"
 DISPOSITIONS = {
 	"Done": ("done", "Bonanalyse fertig."),
 	"Questions": ("done", "Bonanalyse fertig mit Rückfragen in ERPNext."),
+	"Answered": ("done", "Rückfrage beantwortet. Die Antwort steht in ERPNext."),
 	"Superseded": ("cancelled", "Durch eine neuere Rückfrage ersetzt."),
 	"AnalysisError": ("blocked", "Technischer Analysefehler. In ERPNext gespeicherte Bons bleiben erhalten."),
 	"WaitingForSupplier": ("blocked", "Lieferantenvorschlag in ERPNext prüfen und diesen Auftrag fortsetzen."),
@@ -39,7 +40,7 @@ def run_batch(erp, paperclip, run_token, agent_id, vision, model, ptc):
 	# sees the case data and pixels, with no credentials or executable tools.
 	headers = {"X-HV-Paperclip-Run": run_token}
 	checked_out = False
-	for _ in range(55):
+	for _ in range(100):
 		result = erp.request("POST", f"{BATCH_API}.next_step", headers=headers)[0]["message"]
 		state = result["status"]
 		if state == "AwaitingDelivery":
