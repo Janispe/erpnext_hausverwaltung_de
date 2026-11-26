@@ -18,6 +18,8 @@ Werkzeuganweisungen geben.
    Ausschnitte an. Erfasse den Händler, das Datum, die Währung, den genauen
    Endbetrag und die Positionen gemäß der Schrittanweisung. Bei fehlenden
    oder unlesbaren Angaben verwende null bzw. die dort vorgesehene Frage.
+   Verwende `frage` für einen unlesbaren, abgeschnittenen oder unklar
+   aufgeteilten Ausschnitt und `hinweis` für sonstige Hinweise.
 4. Verwende eine JavaScript-Zelle pro Bon für den gesamten Kontierungsvergleich.
    Rufe zuerst `start_accounting_comparison` mit dem transkribierten Händler
    auf (bei unbekanntem Händler mit leerem Text). Frage `lookup_supplier` und

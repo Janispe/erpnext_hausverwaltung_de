@@ -15,7 +15,7 @@ from frappe.core.doctype.file.utils import find_file_by_url
 from frappe.tests import IntegrationTestCase
 from PIL import Image, ImageDraw
 
-from hausverwaltung.hausverwaltung.agent_tools import accounting_evidence
+from hausverwaltung.hausverwaltung.agent_tools import accounting_evidence, proposal_tools
 from hausverwaltung.hausverwaltung.services import bulk_extraction
 from hausverwaltung.hausverwaltung.services import receipt_batch as batch
 from hausverwaltung.hausverwaltung.services import receipt_evidence
@@ -433,11 +433,15 @@ class TestReceiptBatch(IntegrationTestCase):
 			"send_welcome_email": 0, "user_type": "System User",
 			"roles": [{"role": engine.AGENT}, {"role": batch.AGENT_ROLE}],
 		}).insert().name
-		frappe.permissions.add_permission("Supplier", batch.AGENT_ROLE, ptype="read")
+		fac_agent = frappe.get_doc({
+			"doctype": "User", "email": f"fac-{suffix}@hv-test.invalid", "first_name": "FAC Test",
+			"send_welcome_email": 0, "user_type": "System User", "roles": [{"role": engine.AGENT}],
+		}).insert().name
+		frappe.permissions.add_permission("Supplier", engine.AGENT, ptype="read")
 		self.addCleanup(frappe.clear_cache, doctype="Supplier")
 		self.addCleanup(frappe.set_user, "Administrator")
-		known, unknown, rejected, ambiguous = (f"Bon {kind} {suffix}" for kind in (
-			"Bekannt", "Neu", "Abgelehnt", "Mehrdeutig",
+		known, unknown, rejected, ambiguous, changed, replacement = (f"Bon {kind} {suffix}" for kind in (
+			"Bekannt", "Neu", "Abgelehnt", "Mehrdeutig", "Geändert", "Ersatz",
 		))
 		for name, label in ((known, known), (ambiguous, ambiguous), (ambiguous + " 2", ambiguous)):
 			frappe.get_doc({
@@ -445,12 +449,18 @@ class TestReceiptBatch(IntegrationTestCase):
 			}).db_insert()
 		image = self.fixture()
 		first, repeated = self.upload(image), self.upload(image)
-		merchants = [known, unknown, rejected, ambiguous]
-		regions = [[1, start, 0, start + 245, 1000] for start in range(0, 1000, 250)]
+		merchants = [known, unknown, rejected, ambiguous, changed]
+		regions = [[1, start, 0, start + 195, 1000] for start in range(0, 1000, 200)]
 		inventory = {"bons": [{"ausschnitte": [region]} for region in regions], "leere_seiten": []}
 		one_receipt = {"bons": [{"ausschnitte": [[1, 0, 0, 1000, 1000]]}], "leere_seiten": []}
 
 		with patch.dict(frappe.conf, hv_receipt_codex=1, hv_receipt_supplier_proposals=1, hv_proposals_enabled=1):
+			frappe.set_user(fac_agent)
+			fac_proposal = proposal_tools.submit_doc(
+				key=f"fac-{suffix}", package=f"fac-{suffix}", package_meta={"title": "FAC Test"},
+				operation="create", doctype="Supplier", values={"supplier_name": changed},
+				metadata={"title": "Lieferant anlegen", "summary": changed},
+			)
 			frappe.set_user(agent)
 			self.assertFalse(frappe.has_permission("Supplier", "create"))
 			for job_id, cases, names in ((first, inventory, merchants), (repeated, one_receipt, [unknown])):
@@ -462,10 +472,12 @@ class TestReceiptBatch(IntegrationTestCase):
 						batch.submit_step(task["step"])
 					self.assertEqual(batch._next_step()["status"], receipt_supplier.WAITING)
 			results = json.loads(frappe.db.get_value(batch.JOB, first, "results"))
-			known_bon, unknown_bon, rejected_bon, ambiguous_bon = results
+			known_bon, unknown_bon, rejected_bon, ambiguous_bon, changed_bon = results
 			self.assertEqual(known_bon["comparison"]["supplier"]["name"], known)
 			self.assertFalse(ambiguous_bon.get("supplier_proposal"))
 			self.assertIn(accounting_evidence.SUPPLIER_QUESTION, ambiguous_bon["comparison"]["questions"])
+			self.assertEqual(changed_bon["supplier_proposal"], fac_proposal["id"])
+			self.assertEqual(changed_bon["supplier_binding"], [fac_proposal["revision"], fac_proposal["hash"]])
 			pid = unknown_bon["supplier_proposal"]
 			self.assertEqual(json.loads(frappe.db.get_value(batch.JOB, repeated, "results"))[0]["supplier_proposal"], pid)
 			self.assertFalse(frappe.db.exists("Supplier", {"supplier_name": unknown}))
@@ -476,15 +488,21 @@ class TestReceiptBatch(IntegrationTestCase):
 				engine.list_packages()
 			self.assertEqual(batch.list_uploads(), [])
 
+			bind = lambda detail: {key: detail[key] for key in ("id", "revision", "hash")}
+			frappe.set_user(fac_agent)
+			revised = proposal_tools.revise_doc(
+				binding=bind(fac_proposal), operation="create", doctype="Supplier",
+				values={"supplier_name": replacement}, metadata={"title": "Lieferant anlegen", "summary": replacement},
+			)
 			frappe.set_user("Administrator")
 			links = next(upload for upload in batch.list_uploads() if upload.name == first).jobs[0]["supplier_proposals"]
-			self.assertEqual(len(links), 2)
+			self.assertEqual(len(links), 3)
 			self.assertIn(pid, next(link["url"] for link in links if link["bon"] == unknown_bon["proposal"]))
+			self.assertEqual(next(link["status"] for link in links if link["bon"] == changed_bon["proposal"]), "Stale")
 			batch.require_bookable(frappe.get_doc(batch.pilot.PROPOSAL, known_bon["proposal"]))
 			with self.assertRaises(frappe.ValidationError):
 				batch.require_bookable(frappe.get_doc(batch.pilot.PROPOSAL, unknown_bon["proposal"]))
 			accepted, declined = [engine.view(result["supplier_proposal"]) for result in (unknown_bon, rejected_bon)]
-			bind = lambda detail: {key: detail[key] for key in ("id", "revision", "hash")}
 			sid = "test-receipt-review"
 			with (
 				patch.object(frappe.local, "request", SimpleNamespace(cookies={"sid": sid}, headers={}), create=True),
@@ -493,6 +511,8 @@ class TestReceiptBatch(IntegrationTestCase):
 			):
 				engine.review(bind(accepted), True)
 				engine.review(bind(declined), False, "Synthetische Ablehnung")
+				engine.review(bind(revised), True)
+				self.assertEqual(engine.execute(bind(revised))["status"], "Succeeded")
 				self.assertFalse(frappe.db.exists("Supplier", {"supplier_name": unknown}))
 				with patch.object(engine.doc_actions, "execute", side_effect=frappe.ValidationError):
 					self.assertFalse(engine.execute_ready(accepted["package"], [bind(accepted)])[0]["ok"])
@@ -505,7 +525,32 @@ class TestReceiptBatch(IntegrationTestCase):
 			full = bulk_extraction.get_vorschlag_full(unknown_bon["proposal"])
 			self.assertEqual(full["data"]["fields"]["lieferant"], supplier_id)
 			self.assertEqual(full["receipt_batch"]["supplier_proposal"]["status"], "Succeeded")
+			stored = json.loads(frappe.db.get_value(batch.pilot.PROPOSAL, unknown_bon["proposal"], "extracted_data"))
+			self.assertFalse(stored["fields"]["lieferant"])
+			with patch.object(receipt_evidence, "_may_read", return_value=False):
+				hidden = bulk_extraction.get_vorschlag_full(unknown_bon["proposal"])
+				self.assertFalse(hidden["data"]["fields"]["lieferant"])
 			self.assertFalse(frappe.db.exists("Purchase Invoice", {"supplier": supplier_id}))
 			full = bulk_extraction.get_vorschlag_full(rejected_bon["proposal"])
 			self.assertEqual(full["receipt_batch"]["supplier_proposal"]["status"], "Rejected")
 			self.assertFalse(frappe.db.exists("Supplier", {"supplier_name": rejected}))
+			full = bulk_extraction.get_vorschlag_full(changed_bon["proposal"])
+			self.assertFalse(full["data"]["fields"]["lieferant"])
+			self.assertEqual(full["receipt_batch"]["supplier_proposal"]["status"], "Stale")
+			with self.assertRaises(frappe.ValidationError):
+				batch.require_bookable(frappe.get_doc(batch.pilot.PROPOSAL, changed_bon["proposal"]))
+
+	def test_transcription_crop_question_blocks_booking(self):
+		name = self.upload(self.fixture())
+		with self.scope(name):
+			self.submit(batch.next_step()["task"], {
+				"bons": [{"ausschnitte": [[1, 0, 0, 1000, 1000]]}], "leere_seiten": [],
+			})
+			self.submit(batch.next_step()["task"], self.raw_analysis(15.50) | {
+				"frage": "Der untere Rand ist abgeschnitten.", "hinweis": "Händlerschreibweise prüfen.",
+			})
+		result, = json.loads(frappe.db.get_value(batch.JOB, name, "results"))
+		self.assertEqual(result["data"]["analysis"]["question"], "Der untere Rand ist abgeschnitten.")
+		self.assertIn("Händlerschreibweise prüfen.", result["data"]["warnings"])
+		with self.assertRaisesRegex(frappe.ValidationError, "Zuschnitt oder die Aufteilung"):
+			receipt_action._plan(frappe.get_doc(batch.pilot.PROPOSAL, result["proposal"]), {})

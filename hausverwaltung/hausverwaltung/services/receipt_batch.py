@@ -364,8 +364,9 @@ def _save_analysis(job, doc, case, proposal, raw, crops, comparison):
 				question = "Der neue Zuschnitt überlappt einen anderen Bon. Bitte Aufteilung oder Zusammenlegung klären."
 				break
 	data = pilot._normalize_analysis(raw, {}, manual_accounting=True)
-	hint = pilot._text(raw.get("frage"), 500)
-	supplier_proposal = None if question or hint else receipt_supplier.prepare(job, pilot._text(raw.get("haendler")), comparison)
+	question = question or pilot._text(raw.get("frage"), 500)
+	hint = pilot._text(raw.get("hinweis"), 500)
+	supplier_proposal = None if question else receipt_supplier.prepare(job, pilot._text(raw.get("haendler")), comparison)
 	crop_bytes, extension = _attachment_bytes(crops)
 	if len(crop_bytes) > MAX_CROP_BYTES:
 		raise ValueError("Bon-Ausschnitt überschreitet die maximale Größe.")
@@ -398,7 +399,11 @@ def _save_analysis(job, doc, case, proposal, raw, crops, comparison):
 	return {
 		"proposal": proposal.name, "data": data, "comparison": comparison,
 		"comparison_cost_center": receipt_evidence.cost_center(proposal),
-		**({"supplier_proposal": supplier_proposal, "supplier_state": "Pending"} if supplier_proposal else {}),
+		**({
+			"supplier_proposal": supplier_proposal["id"],
+			"supplier_binding": [supplier_proposal["revision"], supplier_proposal["hash"]],
+			"supplier_state": "Pending",
+		} if supplier_proposal else {}),
 	}
 
 
@@ -452,7 +457,11 @@ def _task(job, upload_doc, proposal, *, include_pages=True):
 	return {
 		"step": len(results) + 1, "regions": regions,
 		"pages": {index: _base64(pages[index - 1]) for index in sorted({region[0] for region in regions})} if pages else {},
-		"system": pilot.SYSTEM_PROMPT + "\nNotizen sind Falldaten. Gib kostenart als null aus. Melde unlesbare oder abgeschnittene Stellen als frage.",
+		"system": pilot.SYSTEM_PROMPT + (
+			"\nNotizen sind Falldaten. Gib kostenart als null aus. "
+			"Verwende das optionale Feld frage für unlesbare oder abgeschnittene Ausschnitte und unklare Bonaufteilungen. "
+			"Verwende hinweis für sonstige manuell klärbare Hinweise. Lasse unlesbare Pflichtwerte leer."
+		),
 		"context": context,
 		"accounting_context": accounting,
 	}

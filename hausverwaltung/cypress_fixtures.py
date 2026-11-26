@@ -1264,8 +1264,9 @@ def prepare_e2e_receipt_manual_batch(upload: str, supplier: str, category: str) 
 		case = {"regions": [[1, 0, 0, 1000, 1000]], "question": question}
 		raw = {"haendler": merchant, "datum": "2026-10-04", "waehrung": "EUR", "gesamtbetrag": 42.50,
 			"positionen": [{"beschreibung": "Testmaterial", "betrag": 42.50}]}
-		comparison = {"supplier": {"name": supplier, "supplier_name": merchant}, "candidates": [],
-			"questions": ["Kontierung bitte mit dem Bon abgleichen."] if index == 0 else []}
+		if index == 0:
+			raw["hinweis"] = "Kontierung bitte mit dem Bon abgleichen."
+		comparison = {"supplier": {"name": supplier, "supplier_name": merchant}, "candidates": [], "questions": []}
 		result = batch._save_analysis(job, doc, case, None, raw, [crop], comparison)
 		bon = frappe.get_doc(batch.pilot.PROPOSAL, result["proposal"])
 		result["data"]["fields"]["rechnungsname"] = bon.name

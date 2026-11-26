@@ -192,7 +192,7 @@ test("Drei Bons trotz offener Punkte einzeln prüfen", async ({ desk }) => {
 	await dialog(desk).locator(".btn-modal-close").click();
 	await expect(dialog(desk)).toHaveCount(0);
 	const firstBon = await call(desk, `${inbox}.get_vorschlag_full`, { name: first });
-	expect(firstBon.receipt_batch.revisions[0].account_comparison.questions)
+	expect(firstBon.receipt_batch.revisions[0].warnings)
 		.toContain("Kontierung bitte mit dem Bon abgleichen.");
 	expect(firstBon.receipt_review.status).toBe("Pending");
 

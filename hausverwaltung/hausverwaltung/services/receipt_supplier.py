@@ -14,7 +14,7 @@ MESSAGES = {
 	"Approved": "Lieferantenvorschlag wartet auf Ausführung.",
 	"ExecutionFailed": "Die Lieferantenanlage ist fehlgeschlagen. Vorschlag prüfen und erneut ausführen.",
 	"Rejected": "Lieferantenvorschlag abgelehnt. Bitte die Zuordnung klären.",
-	"Stale": "Lieferantenvorschlag veraltet. Bitte die Zuordnung klären.",
+	"Stale": "Die verknüpfte Lieferantenfassung ist veraltet. Bitte die Zuordnung klären.",
 	"Succeeded": "Lieferant angelegt und dem Bon zugeordnet.",
 }
 
@@ -67,7 +67,7 @@ def prepare(job, merchant, comparison):
 		except (frappe.PermissionError, frappe.DoesNotExistError):
 			comparison["questions"].append("Ein vorhandener Lieferantenvorschlag muss durch die Sachbearbeitung geprüft werden.")
 			return None
-		return proposal.name
+		return {"id": proposal.name, "revision": proposal.current_revision, "hash": proposal.revision_hash}
 	key = proposals.RECEIPT_SUPPLIER_PREFIX + uuid4().hex
 	result = proposal_tools.submit_for_verified_job(
 		key=key, package=key, operation="create", doctype="Supplier",
@@ -76,7 +76,7 @@ def prepare(job, merchant, comparison):
 			"sources": [{"label": "Händlername aus dem verknüpften Bon-Ausschnitt"}]},
 		package_meta={"title": "Lieferantenanlage aus Bon-Upload"},
 	)
-	return result["id"]
+	return {key: result[key] for key in ("id", "revision", "hash")}
 
 
 def _assign(comparison, supplier):
@@ -92,10 +92,12 @@ def resolve(job, result):
 	if not proposal_id or result.get("supplier_state") in {"Succeeded", "Rejected", "Stale"}:
 		return False
 	doc = frappe.get_doc(proposals.PROPOSAL, proposal_id)
-	if doc.status in {"Pending", "Approved"}:
+	same_revision = result.get("supplier_binding") == [doc.current_revision, doc.revision_hash]
+	status = doc.status if same_revision else "Stale"
+	if status in {"Pending", "Approved"}:
 		return False
-	result["supplier_state"] = doc.status
-	if doc.status == "Succeeded":
+	result["supplier_state"] = status
+	if status == "Succeeded":
 		executed = frappe.parse_json(doc.result) or {}
 		name = executed.get("id")
 		if executed.get("doctype") == "Supplier" and doc_actions.can_read_result("Supplier", name, user=job.owner):
@@ -103,8 +105,6 @@ def resolve(job, result):
 				["name", "supplier_name"], as_dict=True)
 			if supplier:
 				_assign(result["comparison"], supplier)
-				result["data"]["fields"]["lieferant"] = name
-				result["data"]["lieferant_neu"] = None
 				return True
 		result["supplier_state"] = "Stale"
 	result["data"]["warnings"].append(MESSAGES[result["supplier_state"]])
@@ -129,7 +129,11 @@ def visible(result):
 	else:
 		link = f"/app/hv-proposals/{detail['package']}?vorschlag={detail['id']}"
 		if state == "Pending":
-			state = "ExecutionFailed" if detail.get("execution_failed") and detail["status"] == "Approved" else detail["status"]
+			state = detail["status"]
+			if result.get("supplier_binding") != [detail["revision"], detail["hash"]]:
+				state = "Stale"
+			if state == "Approved" and detail.get("execution_failed"):
+				state = "ExecutionFailed"
 			if state == "Succeeded":
 				return {"status": state, "message": "Lieferant angelegt. Paperclip-Auftrag in der Bon-Inbox fortsetzen.", "url": link}
 	return {"status": state, "message": MESSAGES[state], "url": link}
