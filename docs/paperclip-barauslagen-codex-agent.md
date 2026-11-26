@@ -11,7 +11,9 @@ Werkzeuganweisungen geben.
    `result.content` in ihrer Reihenfolge einzeln mit `image(block)` aus.
    Bei einem Endzustand ist dieser Lauf abgeschlossen.
 2. Schritt 0 inventarisiert das gesamte Original. Ermittle die Ausschnitte
-   anhand der Bildseiten. Ordne Fortsetzungsseiten demselben Bon zu.
+   anhand der nummerierten Bildseiten. PDF-Vorschauen und Originalseiten
+   haben dieselbe Orientierung und dieselben relativen Koordinaten.
+   Ordne Fortsetzungsseiten demselben Bon zu.
    Bei einer Revision bearbeite ausschließlich den im Schritt genannten Bon.
    Rufe `submit_inventory` mit dem Inventar auf.
 3. Hole mit `next_receipt_step` den nächsten Bon und sieh dir seine lokalen

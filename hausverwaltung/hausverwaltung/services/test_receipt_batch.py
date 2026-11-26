@@ -20,7 +20,7 @@ from hausverwaltung.hausverwaltung.services import bulk_extraction
 from hausverwaltung.hausverwaltung.services import receipt_batch as batch
 from hausverwaltung.hausverwaltung.services import receipt_evidence
 from hausverwaltung.hausverwaltung.services import receipt_supplier
-from hausverwaltung.proposals import frappe_service as engine, receipt_action
+from hausverwaltung.proposals import domain, frappe_service as engine, receipt_action
 
 
 class TestReceiptBatch(IntegrationTestCase):
@@ -214,6 +214,10 @@ class TestReceiptBatch(IntegrationTestCase):
 				self.assertEqual(task["original"]["extension"], "pdf")
 				self.assertEqual(base64.b64decode(task["original"]["content"]), content)
 				self.assertNotIn("pages", task)
+				digest = hashlib.sha256(content).hexdigest()
+				self.assertEqual(batch.codex_next_step(original_digest=digest)["task"]["original"],
+					{"extension": "pdf", "digest": digest})
+				self.assertIn("content", batch.codex_next_step(original_digest="previous-file")["task"]["original"])
 				with self.assertRaises(frappe.PermissionError):
 					batch.next_step()
 
@@ -248,6 +252,41 @@ class TestReceiptBatch(IntegrationTestCase):
 		self.assertTrue(all("überlappen" in case["question"] for case in overlap))
 		with self.assertRaises(ValueError):
 			batch._inventory(cases, 4, None)
+
+	def test_large_pdf_and_inventory_stay_in_one_upload(self):
+		from reportlab.pdfgen.canvas import Canvas
+
+		def pdf(pages, padding=0):
+			with io.BytesIO() as output:
+				canvas = Canvas(output, pagesize=(36, 36), pageCompression=0)
+				if padding:
+					canvas.addLiteral("%" + "x" * padding)
+				for page in range(pages):
+					canvas.drawString(8, 16, str(page + 1))
+					canvas.showPage()
+				canvas.save()
+				return output.getvalue()
+
+		with patch.dict(frappe.conf, {"max_file_size": 40 * 1024**2}):
+			content = pdf(20, 11 * 1024**2)
+			self.assertGreater(len(content), 10 * 1024**2)
+			name = self.upload(content, is_pdf=True)
+			with self.assertRaisesRegex(frappe.ValidationError, "höchstens 20 Seiten"):
+				self.upload(pdf(21), is_pdf=True)
+		self.assertEqual(frappe.db.count(batch.JOB, {"upload": name}), 1)
+		bons = [
+			{"ausschnitte": [[page, left, 0, right, 1000]]}
+			for page in range(20, 0, -1)
+			for left, right in ((0, 330), (330, 660), (660, 1000))
+		]
+		with self.scope(name), patch.dict(frappe.conf, {"hv_receipt_codex": 1}):
+			batch.codex_next_step()
+			self.assertEqual(batch.submit_step(0, {"bons": bons, "leere_seiten": []})["status"], "Running")
+		self.assertEqual(frappe.db.get_value(batch.JOB, name, "total_receipts"), 60)
+		with self.assertRaises(ValueError):
+			batch._inventory({"bons": [*bons, bons[0]], "leere_seiten": []}, 20, None)
+		fallback, = batch._inventory({"bons": [], "leere_seiten": list(range(1, 21))}, 20, None)
+		self.assertEqual(fallback["regions"], [[1, 0, 0, 1000, 1000]])
 
 	def test_account_comparison_verifies_sources_and_company(self):
 		suffix = uuid.uuid4().hex[:10]
@@ -461,6 +500,12 @@ class TestReceiptBatch(IntegrationTestCase):
 				operation="create", doctype="Supplier", values={"supplier_name": changed},
 				metadata={"title": "Lieferant anlegen", "summary": changed},
 			)
+			with self.assertRaises(frappe.PermissionError):
+				proposal_tools.submit_doc(
+					key=f"foreign-{suffix}", package=domain.receipt_upload_package(first),
+					package_meta=domain.receipt_upload_package_meta(first), operation="create", doctype="Supplier",
+					values={"supplier_name": changed}, metadata={"title": "Lieferant anlegen", "summary": changed},
+				)
 			frappe.set_user(agent)
 			self.assertFalse(frappe.has_permission("Supplier", "create"))
 			for job_id, cases, names in ((first, inventory, merchants), (repeated, one_receipt, [unknown])):
@@ -480,6 +525,10 @@ class TestReceiptBatch(IntegrationTestCase):
 			self.assertEqual(changed_bon["supplier_binding"], [fac_proposal["revision"], fac_proposal["hash"]])
 			pid = unknown_bon["supplier_proposal"]
 			self.assertEqual(json.loads(frappe.db.get_value(batch.JOB, repeated, "results"))[0]["supplier_proposal"], pid)
+			package = domain.receipt_upload_package(first)
+			self.assertEqual(frappe.db.get_value(engine.PROPOSAL, pid, "package"), package)
+			self.assertEqual(frappe.db.get_value(engine.PROPOSAL, rejected_bon["supplier_proposal"], "package"), package)
+			self.assertEqual(frappe.db.get_value(engine.PACKAGE, package, "reference_name"), first)
 			self.assertFalse(frappe.db.exists("Supplier", {"supplier_name": unknown}))
 			self.assertFalse(frappe.db.exists("Purchase Invoice", {"supplier": unknown}))
 			with self.assertRaises(frappe.PermissionError):
@@ -531,6 +580,17 @@ class TestReceiptBatch(IntegrationTestCase):
 				hidden = bulk_extraction.get_vorschlag_full(unknown_bon["proposal"])
 				self.assertFalse(hidden["data"]["fields"]["lieferant"])
 			self.assertFalse(frappe.db.exists("Purchase Invoice", {"supplier": supplier_id}))
+			with (
+				patch.object(frappe.local, "request", SimpleNamespace(cookies={"sid": sid}, headers={}), create=True),
+				patch.object(frappe.local, "login_manager", SimpleNamespace(user="Administrator"), create=True),
+				patch.dict(frappe.session, sid=sid),
+				patch.object(receipt_action, "_plan", return_value=({"source": "test"},)),
+				patch.object(receipt_action, "_booking", return_value={}),
+			):
+				for bon in (known_bon, unknown_bon):
+					receipt = frappe.get_doc(batch.pilot.PROPOSAL, bon["proposal"])
+					approval = receipt_action.approve(receipt.name, receipt_action._source(receipt), {})
+					self.assertEqual(frappe.db.get_value(engine.PROPOSAL, approval["binding"]["id"], "package"), package)
 			full = bulk_extraction.get_vorschlag_full(rejected_bon["proposal"])
 			self.assertEqual(full["receipt_batch"]["supplier_proposal"]["status"], "Rejected")
 			self.assertFalse(frappe.db.exists("Supplier", {"supplier_name": rejected}))

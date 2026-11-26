@@ -303,11 +303,11 @@ def revise_doc(
 	return _compact_proposal(result)
 
 
-def submit_for_verified_job(**arguments):
+def submit_for_verified_job(receipt_upload, **arguments):
 	"""Reuse the FAC submit tool with a server-authorized Paperclip job payload."""
 	from hausverwaltung.proposals import frappe_service
 
-	with frappe_service.verified_job_submission():
+	with frappe_service.verified_job_submission(receipt_upload):
 		return submit_doc(**arguments)
 
 

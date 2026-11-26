@@ -26,7 +26,7 @@ RECEIPT_OPERATOR = "Paperclip Bonanalyse"
 RECEIPT_SUPPLIER_PREFIX = "HV-SUPPLIER-"
 
 _writing = ContextVar("hv_proposal_writing", default=False)
-_paperclip_submission = ContextVar("hv_paperclip_proposal_submission", default=False)
+_paperclip_submission = ContextVar("hv_paperclip_proposal_submission", default=None)
 READ_METHODS = {"open_requests", "view", "audit", "list_proposals", "list_packages", "package_graph"}
 
 
@@ -102,9 +102,9 @@ def _not_own_proposal(doc):
 
 
 @contextmanager
-def verified_job_submission():
+def verified_job_submission(receipt_upload):
 	"""Called by server integrations after authorizing the run and its payload."""
-	token = _paperclip_submission.set(True)
+	token = _paperclip_submission.set(receipt_upload)
 	try:
 		yield
 	finally:
@@ -245,7 +245,10 @@ def _lock_package(package, create=False, package_meta=None):
 		if package_meta is None:
 			frappe.throw("New packages require package_meta.title")
 		meta = domain.package_metadata(_json(package_meta, dict))
-		_reference(meta["reference_doctype"], meta["reference_name"])
+		upload = _paperclip_submission.get()
+		if (not upload or package != domain.receipt_upload_package(upload)
+			or (meta["reference_doctype"], meta["reference_name"]) != (domain.RECEIPT_UPLOAD_DOCTYPE, upload)):
+			_reference(meta["reference_doctype"], meta["reference_name"])
 		frappe.get_doc({"doctype": PACKAGE, "package_id": package, "agent": frappe.session.user, **meta}).insert()
 		frappe.db.sql("SELECT name FROM `tabHV Proposal Package` WHERE name=%s FOR UPDATE", (package,))
 
@@ -621,6 +624,11 @@ def submit(key, package, payload, dependencies=None, action=domain.ACTION, packa
 	if isinstance(package, str) and package.upper().startswith((domain.RECEIPT_PACKAGE_PREFIX, "BANK-")):
 		_deny()
 	operation = _parse_operation(action, payload)
+	if isinstance(package, str) and package.upper().startswith(domain.RECEIPT_UPLOAD_PACKAGE_PREFIX):
+		upload = _paperclip_submission.get()
+		if (not upload or package != domain.receipt_upload_package(upload)
+			or action != domain.DOC_CREATE_ACTION or operation.get("doctype") != "Supplier"):
+			_deny()
 	meta = domain.metadata(_json(metadata, dict))
 	dependencies = _json(dependencies if dependencies is not None else [], list)
 	_lock_package(package, create=True, package_meta=package_meta)
@@ -1042,7 +1050,7 @@ def execute_ready(package, bindings):
 		except (frappe.ValidationError, frappe.PermissionError, frappe.DoesNotExistError, ValueError):
 			frappe.db.rollback(save_point=savepoint)
 			result.append({"id": pid, "ok": False, "status": doc.status, "error": _batch_error(messages)})
-			if package.startswith(RECEIPT_SUPPLIER_PREFIX):
+			if package.startswith((RECEIPT_SUPPLIER_PREFIX, domain.RECEIPT_UPLOAD_PACKAGE_PREFIX)):
 				_event(doc, "ExecutionFailed")
 			break
 		else:

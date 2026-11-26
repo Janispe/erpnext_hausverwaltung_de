@@ -1,13 +1,15 @@
 """Deterministic contracts for the Paperclip Codex receipt tools."""
 
 import base64
+import hashlib
 import io
 import json
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from PIL import Image
 
+from hausverwaltung.receipt_media import render_pages
 from paperclip_codex_receipts import command_for, public_event
 from receipt_codex_mcp import ReceiptJob
 
@@ -78,6 +80,33 @@ class TestReceiptCodexMcp(unittest.TestCase):
 		self.assertEqual(patch.kwargs["data"]["status"], "blocked")
 		self.assertEqual(patch.kwargs["data"]["unblockDescriptor"]["owner"], {"agentId": "assigned-agent"})
 		self.assertEqual(patch.kwargs["headers"], {"X-Paperclip-Run-Id": "assigned-run"})
+
+	def test_large_pdf_reuses_original_and_crops_the_final_page(self):
+		pages = [Image.new("RGB", (40, 24), (10 * i, 0, 0)) for i in range(1, 21)]
+		with io.BytesIO() as output:
+			pages[0].save(output, "PDF", save_all=True, append_images=pages[1:])
+			content = output.getvalue()
+		digest = hashlib.sha256(content).hexdigest()
+		task = {
+			"step": 0, "page_limit": 20, "original": {"extension": "pdf", "digest": digest,
+				"content": base64.b64encode(content).decode("ascii")},
+			"system": "Synthetic", "context": {}, "accounting_context": {},
+		}
+		self.erp.request.return_value = ({"message": SCOPE | {"status": "Running", "task": task}}, {})
+		overview = self.job.next_step()["content"]
+		self.assertEqual(len(overview), 20)
+		self.assertEqual({image["mimeType"] for image in overview}, {"image/jpeg"})
+
+		task = dict(task, step=1, original={"extension": "pdf", "digest": digest},
+			regions=[[20, 500, 0, 1000, 1000]])
+		self.erp.request.return_value = ({"message": SCOPE | {"status": "Running", "task": task}}, {})
+		with patch("receipt_codex_mcp.render_pages", wraps=render_pages) as render:
+			crop, = self.job.next_step()["content"]
+		self.assertEqual(render.call_args.kwargs["page_numbers"], [20])
+		self.assertEqual(self.erp.request.call_args.kwargs["data"], {"original_digest": digest})
+		self.assertEqual(crop["mimeType"], "image/png")
+		with Image.open(io.BytesIO(base64.b64decode(crop["data"]))) as image:
+			self.assertGreater(image.getpixel((2, 2))[0], 190)
 
 	def test_raw_codex_events_do_not_reach_paperclip(self):
 		for item_type in ("mcp_tool_call", "reasoning", "agent_message"):

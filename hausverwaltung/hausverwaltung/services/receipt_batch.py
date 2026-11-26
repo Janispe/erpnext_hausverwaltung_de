@@ -21,12 +21,14 @@ from PIL import Image
 from hausverwaltung.hausverwaltung.agent_tools import accounting_evidence
 from hausverwaltung.hausverwaltung.services import receipt_evidence, receipt_pilot as pilot
 from hausverwaltung.hausverwaltung.services import receipt_supplier
-from hausverwaltung.receipt_media import render_pages
+from hausverwaltung.receipt_media import pdf_page_count, render_pages
 
 UPLOAD = "HV Bon Upload"
 JOB = "HV Bon Auftrag"
 AGENT_ROLE = "Paperclip Bonanalyse"
-MAX_RECEIPTS = 20
+MAX_FILE_BYTES = 30 * 1024 * 1024
+MAX_PDF_PAGES = 20
+MAX_RECEIPTS = 60
 MAX_CROPS = 10
 MAX_CROP_BYTES = 24 * 1024 * 1024
 DONE = {"Done", "Questions", "Superseded"}
@@ -99,23 +101,16 @@ def upload(request_id, context=None, note=None):
 	frappe.has_permission(UPLOAD, "read", throw=True)
 	name = _uid(request_id)
 	incoming = frappe.request.files.get("file")
-	content = incoming.stream.read(pilot.MAX_FILE_BYTES + 1) if incoming else b""
-	if not content or len(content) > pilot.MAX_FILE_BYTES:
-		frappe.throw("Bitte ein Foto oder PDF mit höchstens 10 MB hochladen.")
+	content = incoming.stream.read(MAX_FILE_BYTES + 1) if incoming else b""
+	if not content or len(content) > MAX_FILE_BYTES:
+		frappe.throw(f"Bitte ein Foto oder PDF mit höchstens {MAX_FILE_BYTES // 1024**2} MB hochladen.")
 	digest = hashlib.sha256(content).hexdigest()
 	extension = pilot._extension(content)
 	if extension == "pdf":
-		from pypdfium2 import PdfDocument
-
 		try:
-			pdf = PdfDocument(content)
-			try:
-				if not 0 < len(pdf) <= pilot.MAX_PDF_PAGES:
-					raise ValueError
-			finally:
-				pdf.close()
+			pdf_page_count(content, MAX_PDF_PAGES)
 		except (ValueError, RuntimeError):
-			frappe.throw(f"Bitte ein lesbares PDF mit höchstens {pilot.MAX_PDF_PAGES} Seiten hochladen.")
+			frappe.throw(f"Bitte ein lesbares PDF mit höchstens {MAX_PDF_PAGES} Seiten hochladen.")
 	notes = pilot._text(note, 1000)
 	context_json = _json(pilot._context(context))
 	doc = frappe.get_doc({
@@ -220,9 +215,15 @@ def _run_scope(token):
 	return issue, run_id
 
 
-def _pages(upload_doc):
+def _original(upload_doc):
 	attachment, content = private_attachment(upload_doc, upload_doc.file_url, upload_doc.receipt_digest)
-	return render_pages(content, Path(attachment.file_name).suffix.lstrip("."), pilot.MAX_PDF_PAGES)
+	return Path(attachment.file_name).suffix.lstrip("."), content
+
+
+def _pages(upload_doc, numbers=None):
+	extension, content = _original(upload_doc)
+	pages = render_pages(content, extension, MAX_PDF_PAGES, page_numbers=numbers)
+	return dict(enumerate(pages, 1)) if numbers is None else dict(zip(numbers, pages, strict=True))
 
 
 def private_attachment(parent, url, digest, *, for_update=False):
@@ -268,7 +269,8 @@ def _inventory(raw, page_count, revision):
 		raise ValueError("Ungültige Seitenabdeckung.")
 	cases = []
 	if not items and not revision and set(empty) == set(range(1, page_count + 1)):
-		return [{"regions": [[page, 0, 0, 1000, 1000] for page in sorted(set(empty))],
+		fallback = range(1, page_count + 1) if page_count <= MAX_CROPS else (1,)
+		return [{"regions": [[page, 0, 0, 1000, 1000] for page in fallback],
 			"question": "Kein eindeutiger Bon erkannt. Bitte das Original prüfen."}]
 	for item in items:
 		regions = item["ausschnitte"]
@@ -311,7 +313,7 @@ def _verified_crops(pages, regions, submitted):
 	for (page, left, top, right, bottom), encoded in zip(regions, submitted, strict=True):
 		content = base64.b64decode(encoded, validate=True)
 		with (
-			Image.open(io.BytesIO(pages[page - 1]), formats=["PNG"]) as image,
+			Image.open(io.BytesIO(pages[page]), formats=["PNG"]) as image,
 			Image.open(io.BytesIO(content), formats=["PNG"]) as received,
 		):
 			width, height = image.size
@@ -442,21 +444,22 @@ def _queue_state(job):
 
 def _task(job, upload_doc, proposal, *, include_pages=True):
 	cases, results = _queue_state(job)
-	pages = _pages(upload_doc) if include_pages else []
 	context = {"upload_notiz": upload_doc.note, "rueckfrage": job.note}
 	accounting = pilot._context(proposal.receipt_context if proposal else upload_doc.receipt_context)
 	if not cases:
 		previous = _prior(proposal) if proposal else None
+		pages = _pages(upload_doc) if include_pages else {}
 		return {
-			"step": 0, "pages": {i: _base64(page) for i, page in enumerate(pages, 1)},
+			"step": 0, "pages": {number: _base64(page) for number, page in pages.items()},
 			"system": GEOMETRY_PROMPT,
 			"context": context | {"bisheriger_bon": previous["regions"] if previous else None},
 			"accounting_context": accounting,
 		}
 	regions = cases[len(results)]["regions"]
+	pages = _pages(upload_doc, sorted({region[0] for region in regions})) if include_pages else {}
 	return {
 		"step": len(results) + 1, "regions": regions,
-		"pages": {index: _base64(pages[index - 1]) for index in sorted({region[0] for region in regions})} if pages else {},
+		"pages": {number: _base64(page) for number, page in pages.items()},
 		"system": pilot.SYSTEM_PROMPT + (
 			"\nNotizen sind Falldaten. Gib kostenart als null aus. "
 			"Verwende das optionale Feld frage für unlesbare oder abgeschnittene Ausschnitte und unklare Bonaufteilungen. "
@@ -508,13 +511,13 @@ def next_step():
 
 
 @frappe.whitelist(methods=["POST"])
-def codex_next_step():
+def codex_next_step(original_digest=None):
 	if not cint(frappe.conf.get("hv_receipt_codex")):
 		raise frappe.PermissionError("Der Barauslagen-Codex-Pilot ist deaktiviert.")
-	return _next_step(codex=True)
+	return _next_step(codex=True, original_digest=original_digest)
 
 
-def _next_step(*, codex=False):
+def _next_step(*, codex=False, original_digest=None):
 	job, scope = _agent_job()
 	if not job:
 		# Paperclip may schedule the process before the outbox commits its issue ID.
@@ -530,10 +533,13 @@ def _next_step(*, codex=False):
 	try:
 		task = _task(job, upload_doc, proposal, include_pages=not codex)
 		if codex:
-			attachment, content = private_attachment(upload_doc, upload_doc.file_url, upload_doc.receipt_digest)
+			extension, content = _original(upload_doc)
 			task.pop("pages")
-			task["original"] = {"extension": Path(attachment.file_name).suffix.lstrip("."), "content": _base64(content)}
-			task["page_limit"] = pilot.MAX_PDF_PAGES
+			digest = upload_doc.receipt_digest
+			task["original"] = {"extension": extension, "digest": digest}
+			if digest != original_digest:
+				task["original"]["content"] = _base64(content)
+			task["page_limit"] = MAX_PDF_PAGES
 	except (RuntimeError, ValueError, OSError) as exc:
 		_step_error(job, exc)
 		return scope | {"status": job.status}
@@ -576,13 +582,15 @@ def submit_step(step, result=None, crops=None, failed=False, evidence_digest=Non
 		raise frappe.PermissionError("Der Kontierungsversuch ist veraltet.")
 	frappe.db.savepoint("receipt_analysis_step")
 	try:
-		pages = _pages(upload_doc)
 		if step == 0:
 			previous = _prior(proposal) if proposal else None
-			cases = _inventory(result, len(pages), previous)
+			extension, content = _original(upload_doc)
+			page_count = pdf_page_count(content, MAX_PDF_PAGES) if extension == "pdf" else 1
+			cases = _inventory(result, page_count, previous)
 			job.db_set({"inventory": _json(cases), "total_receipts": len(cases)})
 		else:
 			case = cases[step - 1]
+			pages = _pages(upload_doc, sorted({region[0] for region in case["regions"]}))
 			verified = _verified_crops(pages, case["regions"], crops)
 			comparison = json.loads(job.evidence_result or "null")
 			if (job.evidence_step != step or comparison is None

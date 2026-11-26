@@ -113,7 +113,7 @@ function hv_open_receipt_batch(on_uploaded, multi) {
 				return;
 			}
 			if (remaining.length > 50) {
-				frappe.msgprint(__("Pro Stapel sind bis zu 50 Bons möglich."));
+				frappe.msgprint(__("Bitte höchstens 50 Dateien auf einmal auswählen."));
 				return;
 			}
 			dialog.disable_primary_action();
@@ -507,6 +507,12 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		layout.find(".hv-receipt-batch-list").prop("open", true);
 		refresh_list();
 	}, state.receipt_batch_enabled));
+	layout.on("click", ".btn-receipt-upload", (event) => {
+		hausverwaltung.buchungs_inbox._apply_route_options({
+			session_id: event.currentTarget.dataset.receiptUpload,
+			status: "alle",
+		});
+	});
 	layout.on("click", ".btn-refresh", () => refresh_list(true));
 	layout.on("click", ".btn-bulk", () => {
 		if (
@@ -555,6 +561,8 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				batches.children("summary").text(__("Bon-Uploads ({0})", [state.receipt_batches.length]));
 				batches.children("div").html(state.receipt_batches.map((upload) => `<p>
 					<a href="${escape(upload.file_url)}" target="_blank" rel="noopener">${escape(upload.original_filename)} ↗</a>
+					<button type="button" class="btn btn-default btn-xs btn-receipt-upload"
+						data-receipt-upload="${escape(upload.name)}">${__("Bons anzeigen")}</button>
 					${upload.jobs.map((job) => `<br>${job.proposal ? escape(job.proposal) + " · " : ""}
 						${hv_receipt_progress(job)} · ${hv_receipt_paperclip(job)} ${escape(job.error || "")}
 						${(job.supplier_proposals || []).map((supplier) => `<br>${escape(supplier.bon)} ·
@@ -594,12 +602,12 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 	const _update_session_dropdown = () => {
 		const $sel = layout.find('select[data-filter="session_id"]');
 		const current = state.filters.session_id || "";
+		const labels = new Map(state.receipt_batches.map((upload) => [upload.name, upload.original_filename]));
+		const sessions = new Set([...state.sessions, ...labels.keys()]);
 		const options = [
 			`<option value="">${__("Alle Sessions")}</option>`,
-			...state.sessions.map(
-				(s) =>
-					`<option value="${frappe.utils.escape_html(s)}">${frappe.utils.escape_html(s)}</option>`
-			),
+			...Array.from(sessions, (s) =>
+				`<option value="${frappe.utils.escape_html(s)}">${frappe.utils.escape_html(labels.get(s) || s)}</option>`),
 		];
 		$sel.html(options.join(""));
 		$sel.val(current);

@@ -82,10 +82,20 @@ Auf einer **isolierten synthetischen Site** nach `bench migrate` zusätzlich
 `bench --site TESTSITE set-config --parse hv_receipt_batch 1` setzen. Beide
 Pilot-Schalter müssen aktiv sein. Der Original-Upload bleibt bytegenau privat.
 Ein Foto oder PDF ist ein eigener Auftrag, auch wenn mehrere Dateien
-gleichzeitig ausgewählt werden. Je Datei sind 10 MB und fünf PDF-Seiten
-möglich. Die Analyse unterstützt bis zu 20 Bons und bis zu zehn Ausschnitte je
+gleichzeitig ausgewählt werden. Je Datei unterstützt die Stapelanalyse bis zu
+30 MiB, 20 PDF-Seiten und 60 Bons. Sie unterstützt bis zu zehn Ausschnitte je
 Bon. Koordinaten liegen bei 0 bis 1000 je Bildachse, gemessen vom linken oberen
 Rand der EXIF-korrigierten Fotoseite bzw. der gerenderten PDF-Seite.
+
+Damit die vollen 30 MiB über HTTP ankommen, braucht die ERPNext-Site
+`max_file_size` von mindestens 41943040 Byte (40 MiB) für Originaldatei,
+Multipart- und JSON-Overhead. Den vorgeschalteten Proxy auf mindestens 50 MiB
+setzen. Die Site-Einstellung betrifft auch andere ERPNext-Uploads. Nach der
+Änderung die ERPNext-Dienste neu laden. App und Paperclip-Worker auf denselben
+App-Stand bringen. Der Codex-Worker hält die Originaldatei für den laufenden
+Auftrag im Speicher. Für die Inventarisierung verwendet er nummerierte
+PDF-Vorschauen. Für jeden Bon rendert und prüft der Ablauf nur die betroffenen
+Seiten in voller Auflösung.
 
 ### Paperclip-Mitarbeiter Barauslagen mit Codex
 
@@ -157,6 +167,12 @@ serverseitig autorisierte Aufrufe aus dem verifizierten Auftragskontext.
 `submit_receipt` übernimmt den Händlernamen aus der validierten Bonanalyse
 und verwendet das FAC-Vorschlagswerkzeug. Eindeutige Stammdaten haben
 Vorrang. Mehrdeutige Treffer erscheinen als Rückfrage.
+
+Neue Lieferantenvorschläge und Buchungsfreigaben aus demselben Upload landen
+im selben Vorschlagspaket. Bereits vorhandene Lieferantenvorschläge werden
+verlinkt und können auch aus einem anderen Paket stammen. Unter **Bon-Uploads**
+zeigt **Bons anzeigen** die zugehörigen Bons einschließlich bereits gebuchter
+Vorschläge. Die einzelnen Bons bleiben separat prüf- und buchbar.
 
 Unter **Bon-Uploads** den Lieferantenvorschlag öffnen. Die Sachbearbeitung
 prüft ihn in **Aktionsvorschläge**, gibt ihn frei und führt ihn aus.

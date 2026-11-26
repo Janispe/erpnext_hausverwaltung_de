@@ -2,6 +2,7 @@
 """Bind one native Codex turn to its assigned receipt job and FAC catalogue."""
 
 import base64
+import hashlib
 import json
 import os
 import sys
@@ -52,6 +53,8 @@ class ReceiptJob:
 		self.attempt = None
 		self.evidence = None
 		self.digest = None
+		self.original = None
+		self.original_digest = None
 		self.catalogue = self.post(BATCH_API, "codex_catalogue")
 		self.accounting_tools = {entry["name"] for entry in self.catalogue}
 
@@ -59,8 +62,9 @@ class ReceiptJob:
 		return self.erp.request("POST", f"{api}.{method}", headers=self.headers, data=data)[0]["message"]
 
 	def next_step(self):
+		cached = {"original_digest": self.original_digest} if self.original_digest else None
 		for _ in range(30):
-			result = self.post(BATCH_API, "codex_next_step")
+			result = self.post(BATCH_API, "codex_next_step", cached)
 			if result["status"] != "AwaitingDelivery":
 				break
 			time.sleep(1)
@@ -83,19 +87,35 @@ class ReceiptJob:
 		self.task = task
 		original = task.pop("original")
 		try:
-			pages = render_pages(base64.b64decode(original["content"], validate=True), original["extension"], task["page_limit"])
-			images = [base64.b64encode(page).decode("ascii") for page in pages]
-			if task["step"]:
-				pages_by_number = {str(i): data for i, data in enumerate(images, 1)}
-				self.crops = images = crop_pages(pages_by_number, task["regions"])
+			images, mime_type = self.step_images(original, task)
+			self.crops = images if task["step"] else None
 		except (RuntimeError, ValueError, OSError, IndexError):
 			return self.submit(failed=True, evidence_attempt=self.attempt)
 		return {
 			"structuredContent": {
 				"status": "Running", **{key: task[key] for key in ("step", "system", "context", "accounting_context")},
 			},
-			"content": [{"type": "image", "data": data, "mimeType": "image/png"} for data in images],
+			"content": [{"type": "image", "data": data, "mimeType": mime_type} for data in images],
 		}
+
+	def step_images(self, original, task):
+		digest = original.get("digest")
+		if "content" in original:
+			content = base64.b64decode(original["content"], validate=True)
+			if digest and hashlib.sha256(content).hexdigest() != digest:
+				raise ValueError("Receipt original does not match ERPNext.")
+			self.original, self.original_digest = content, digest
+		elif not digest or digest != self.original_digest or self.original is None:
+			raise ValueError("Receipt original is missing from this run.")
+		extension = original["extension"]
+		numbers = sorted({region[0] for region in task["regions"]}) if task["step"] else None
+		preview = extension == "pdf" and numbers is None
+		pages = render_pages(self.original, extension, task["page_limit"], page_numbers=numbers, preview=preview)
+		images = [base64.b64encode(page).decode("ascii") for page in pages]
+		if numbers is not None:
+			pages_by_number = {str(number): image for number, image in zip(numbers, images, strict=True)}
+			images = crop_pages(pages_by_number, task["regions"])
+		return images, "image/jpeg" if preview else "image/png"
 
 	def status(self, result):
 		state = result["status"]
