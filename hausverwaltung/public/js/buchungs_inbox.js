@@ -32,7 +32,7 @@ function hv_receipt_context_fields(defaults = {}) {
 }
 
 const HV_RECEIPT_BATCH_API = "hausverwaltung.hausverwaltung.services.receipt_batch";
-const HV_RECEIPT_DONE = new Set(["Done", "Questions"]);
+const HV_RECEIPT_DONE = new Set(["Done", "Questions", "Answered"]);
 
 function hv_receipt_progress(job) {
 	const labels = {
@@ -40,6 +40,7 @@ function hv_receipt_progress(job) {
 		Dispatched: __("In Paperclip eingereiht"), Running: __("Analyse läuft"), Interrupted: __("Analyse unterbrochen"),
 		AnalysisError: __("Technischer Analysefehler"), Done: __("Fertig"), Questions: __("Fertig mit Rückfragen"),
 		WaitingForSupplier: __("Wartet auf Lieferantenvorschlag"),
+		Answered: __("Beantwortet"),
 	};
 	const progress = job.total ? __(" · {0} von {1} bearbeitet", [job.processed, job.total]) : "";
 	return frappe.utils.escape_html((labels[job.status] || job.status) + progress);
@@ -50,6 +51,18 @@ function hv_receipt_supplier(supplier) {
 	if (!supplier.url) return message;
 	return `${message} · <a href="${frappe.utils.escape_html(supplier.url)}" target="_blank" rel="noopener">
 		${__("Vorschlag öffnen")} ↗</a>`;
+}
+
+function hv_receipt_upload_question(job) {
+	const escape = frappe.utils.escape_html;
+	return `<div class="hv-receipt-upload-question">
+		<strong>${__("Rückfrage")}</strong>
+		<div class="hv-receipt-question-text">${escape(job.question)}</div>
+		${job.answer ? `<strong>${__("Antwort")}</strong>
+			<div class="hv-receipt-question-text">${escape(job.answer)}</div>` : ""}
+		<div class="text-muted">${hv_receipt_progress(job)} · ${hv_receipt_paperclip(job)}
+			${escape(job.error || "")}</div>
+	</div>`;
 }
 
 function hv_receipt_paperclip(job) {
@@ -113,7 +126,7 @@ function hv_open_receipt_batch(on_uploaded, multi) {
 				return;
 			}
 			if (remaining.length > 50) {
-				frappe.msgprint(__("Pro Stapel sind bis zu 50 Bons möglich."));
+				frappe.msgprint(__("Bitte höchstens 50 Dateien auf einmal auswählen."));
 				return;
 			}
 			dialog.disable_primary_action();
@@ -178,6 +191,15 @@ const _hv_inbox_ensure_styles = () => {
 	const style = document.createElement("style");
 	style.id = HV_INBOX_STYLE_ID;
 	style.textContent = `
+		.hv-receipt-upload-question {
+			margin: 6px 0 10px;
+			padding: 0 10px;
+			border-left: 2px solid var(--border-color);
+		}
+		.hv-receipt-question-text {
+			white-space: pre-wrap;
+			overflow-wrap: anywhere;
+		}
 		.hv-inbox {
 			display: flex;
 			flex-direction: column;
@@ -507,6 +529,33 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		layout.find(".hv-receipt-batch-list").prop("open", true);
 		refresh_list();
 	}, state.receipt_batch_enabled));
+	layout.on("click", ".btn-receipt-upload", (event) => {
+		hausverwaltung.buchungs_inbox._apply_route_options({
+			session_id: event.currentTarget.dataset.receiptUpload,
+			status: "alle",
+		});
+	});
+	layout.on("click", ".btn-ask-receipt-upload", (event) => {
+		const name = event.currentTarget.dataset.receiptUpload;
+		const request_id = crypto.randomUUID();
+		const dialog = new frappe.ui.Dialog({
+			title: __("Rückfrage zum Stapel"),
+			fields: [{ fieldtype: "Small Text", fieldname: "question", label: __("Rückfrage"), reqd: 1 }],
+			primary_action_label: __("An Paperclip senden"),
+			async primary_action({ question }) {
+				dialog.disable_primary_action();
+				try {
+					await frappe.call({ method: `${HV_RECEIPT_BATCH_API}.ask_upload_question`,
+						args: { name, request_id, question } });
+					dialog.hide();
+					refresh_list();
+				} finally {
+					dialog.enable_primary_action();
+				}
+			},
+		});
+		dialog.show();
+	});
 	layout.on("click", ".btn-refresh", () => refresh_list(true));
 	layout.on("click", ".btn-bulk", () => {
 		if (
@@ -553,13 +602,17 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				const escape = frappe.utils.escape_html;
 				batches.toggleClass("hidden", !state.receipt_batches.length);
 				batches.children("summary").text(__("Bon-Uploads ({0})", [state.receipt_batches.length]));
-				batches.children("div").html(state.receipt_batches.map((upload) => `<p>
+				batches.children("div").html(state.receipt_batches.map((upload) => `<div><p>
 					<a href="${escape(upload.file_url)}" target="_blank" rel="noopener">${escape(upload.original_filename)} ↗</a>
-					${upload.jobs.map((job) => `<br>${job.proposal ? escape(job.proposal) + " · " : ""}
+					<button type="button" class="btn btn-default btn-xs btn-receipt-upload"
+						data-receipt-upload="${escape(upload.name)}">${__("Bons anzeigen")}</button>
+					${upload.can_ask ? `<button type="button" class="btn btn-default btn-xs btn-ask-receipt-upload"
+						data-receipt-upload="${escape(upload.name)}">${__("Rückfrage zum Stapel")}</button>` : ""}
+					${upload.jobs.filter((job) => !job.question).map((job) => `<br>${job.proposal ? escape(job.proposal) + " · " : ""}
 						${hv_receipt_progress(job)} · ${hv_receipt_paperclip(job)} ${escape(job.error || "")}
 						${(job.supplier_proposals || []).map((supplier) => `<br>${escape(supplier.bon)} ·
 							${hv_receipt_supplier(supplier)}`).join("")}`).join("")}
-				</p>`).join(""));
+				</p>${upload.jobs.filter((job) => job.question).map(hv_receipt_upload_question).join("")}</div>`).join(""));
 
 				const progress = new Map(state.receipt_batches.flatMap((upload) =>
 					upload.jobs.map((job) => [job.name, JSON.stringify(job)])
@@ -594,12 +647,12 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 	const _update_session_dropdown = () => {
 		const $sel = layout.find('select[data-filter="session_id"]');
 		const current = state.filters.session_id || "";
+		const labels = new Map(state.receipt_batches.map((upload) => [upload.name, upload.original_filename]));
+		const sessions = new Set([...state.sessions, ...labels.keys()]);
 		const options = [
 			`<option value="">${__("Alle Sessions")}</option>`,
-			...state.sessions.map(
-				(s) =>
-					`<option value="${frappe.utils.escape_html(s)}">${frappe.utils.escape_html(s)}</option>`
-			),
+			...Array.from(sessions, (s) =>
+				`<option value="${frappe.utils.escape_html(s)}">${frappe.utils.escape_html(labels.get(s) || s)}</option>`),
 		];
 		$sel.html(options.join(""));
 		$sel.val(current);
@@ -889,11 +942,11 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		const review = full.receipt_review;
 		const booking = review?.booking;
 		const batch = full.receipt_batch;
-		const blocker = (batch?.booking_blocker && batch.supplier_proposal?.message)
-			|| batch?.booking_blocker
-			|| (row.status !== "Ready" && __("Die aktuelle Analyse dieses Bons muss zuerst abgeschlossen sein."))
-			|| (data.waehrung && data.waehrung !== "EUR" && __("Fremdwährungsbelege bitte außerhalb des Barauslagen-Piloten erfassen."))
-			|| (!review && __("Die Barauslagen-Freigabe benötigt eine angemeldete Buchhaltungssitzung."));
+		const analysis_blocker = batch?.booking_blocker
+			|| (data.waehrung && data.waehrung !== "EUR" && __("Die Analyse meldet eine Fremdwährung. Prüfe die Währung am Original."));
+		const blocker = (row.status !== "Ready" && __("Die aktuelle Analyse dieses Bons muss zuerst abgeschlossen sein."))
+			|| (!review && __("Die Barauslagen-Freigabe benötigt eine angemeldete Buchhaltungssitzung."))
+			|| (!batch?.manual_review_available && analysis_blocker);
 
 		// Polling sofort pausieren, sonst kann ein 3-Sek-Tick mid-Dialog
 		// den PDF-Embed unter dem Modal neu mounten (-> Browser-Tab-Hang).
@@ -924,6 +977,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				_receipt: true,
 				_receipt_review: review,
 				_receipt_blocker: blocker,
+				_receipt_manual_reason: batch?.manual_review_available && analysis_blocker,
 				_receipt_questions: receipt.fragen,
 				_receipt_original: batch?.original,
 				_receipt_context_fields: hv_receipt_context_fields(receipt).map((field) => ({

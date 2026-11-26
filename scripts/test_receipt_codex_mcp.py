@@ -1,13 +1,15 @@
 """Deterministic contracts for the Paperclip Codex receipt tools."""
 
 import base64
+import hashlib
 import io
 import json
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from PIL import Image
 
+from hausverwaltung.receipt_media import render_pages
 from paperclip_codex_receipts import command_for, public_event
 from receipt_codex_mcp import ReceiptJob
 
@@ -23,7 +25,7 @@ class TestReceiptCodexMcp(unittest.TestCase):
 		self.paperclip.request.return_value = ({"status": "todo"}, {})
 		self.job = ReceiptJob(self.erp, self.paperclip, "test-token", "assigned-agent")
 
-	def stage(self, step):
+	def stage(self, step, **additional_task_fields):
 		with io.BytesIO() as output:
 			Image.new("RGB", (40, 24), "red").save(output, "PNG")
 			content = base64.b64encode(output.getvalue()).decode()
@@ -31,7 +33,7 @@ class TestReceiptCodexMcp(unittest.TestCase):
 			"status": "Running", "task": {
 				"step": step, "page_limit": 5, "original": {"extension": "png", "content": content},
 				"regions": [[1, 500, 0, 1000, 1000]], "system": "Synthetic", "context": {"upload_notiz": "Notiz"},
-				"accounting_context": {},
+				"accounting_context": {}, **additional_task_fields,
 			},
 		}}, {})
 		return self.job.next_step()
@@ -78,6 +80,47 @@ class TestReceiptCodexMcp(unittest.TestCase):
 		self.assertEqual(patch.kwargs["data"]["status"], "blocked")
 		self.assertEqual(patch.kwargs["data"]["unblockDescriptor"]["owner"], {"agentId": "assigned-agent"})
 		self.assertEqual(patch.kwargs["headers"], {"X-Paperclip-Run-Id": "assigned-run"})
+
+	def test_large_pdf_reuses_original_and_crops_the_final_page(self):
+		pages = [Image.new("RGB", (40, 24), (10 * i, 0, 0)) for i in range(1, 21)]
+		with io.BytesIO() as output:
+			pages[0].save(output, "PDF", save_all=True, append_images=pages[1:])
+			content = output.getvalue()
+		digest = hashlib.sha256(content).hexdigest()
+		task = {
+			"step": 0, "page_limit": 20, "original": {"extension": "pdf", "digest": digest,
+				"content": base64.b64encode(content).decode("ascii")},
+			"system": "Synthetic", "context": {}, "accounting_context": {},
+		}
+		self.erp.request.return_value = ({"message": SCOPE | {"status": "Running", "task": task}}, {})
+		overview = self.job.next_step()["content"]
+		self.assertEqual(len(overview), 20)
+		self.assertEqual({image["mimeType"] for image in overview}, {"image/jpeg"})
+
+		task = dict(task, step=1, original={"extension": "pdf", "digest": digest},
+			regions=[[20, 500, 0, 1000, 1000]])
+		self.erp.request.return_value = ({"message": SCOPE | {"status": "Running", "task": task}}, {})
+		with patch("receipt_codex_mcp.render_pages", wraps=render_pages) as render:
+			crop, = self.job.next_step()["content"]
+		self.assertEqual(render.call_args.kwargs["page_numbers"], [20])
+		self.assertEqual(self.erp.request.call_args.kwargs["data"], {"original_digest": digest})
+		self.assertEqual(crop["mimeType"], "image/png")
+		with Image.open(io.BytesIO(base64.b64decode(crop["data"]))) as image:
+			self.assertGreater(image.getpixel((2, 2))[0], 190)
+
+	def test_upload_question_can_read_pages_and_saves_answer_only_to_erp(self):
+		task = self.stage(0, mode="upload_question")
+		self.assertEqual(task["structuredContent"]["mode"], "upload_question")
+		self.assertEqual(self.job.call("read_upload_question_pages", {"pages": [1]})["structuredContent"], {"pages": [1]})
+		with self.assertRaises(ValueError):
+			self.job.call("submit_inventory", {"inventory": {}})
+		self.erp.request.return_value = ({"message": SCOPE | {"status": "Answered"}}, {})
+		answer = "Diese vertrauliche synthetische Antwort steht nur in ERPNext."
+		self.assertEqual(self.job.call("answer_upload_question", {"answer": answer}), {"status": "Answered"})
+		self.assertEqual(self.erp.request.call_args.kwargs["data"], {"step": 0, "answer": answer})
+		self.assertEqual(self.paperclip.request.call_args.kwargs["data"], {
+			"status": "done", "comment": "Rückfrage beantwortet. Die Antwort steht in ERPNext.",
+		})
 
 	def test_raw_codex_events_do_not_reach_paperclip(self):
 		for item_type in ("mcp_tool_call", "reasoning", "agent_message"):

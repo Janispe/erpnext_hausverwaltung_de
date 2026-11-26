@@ -199,6 +199,9 @@ test("Drei Bons trotz offener Punkte einzeln prüfen", async ({ desk }) => {
 	await reviewBon(3);
 	await expect(dialog(desk).getByText("Bitte den Zuschnitt oder die Aufteilung des Bons zuerst klären.")).toBeVisible();
 	await expect(dialog(desk).getByRole("button", { name: "Freigeben und buchen" })).toBeDisabled();
+	await dialog(desk).getByRole("button", { name: "Hinweise überspringen und manuell prüfen" }).click();
+	await expect(dialog(desk).getByText("Prüfe diesen Bon am Original.", { exact: false })).toBeVisible();
+	await expect(dialog(desk).getByRole("button", { name: "Freigeben und buchen" })).toBeEnabled();
 	await dialog(desk).locator(".btn-modal-close").click();
 	await expect(dialog(desk)).toHaveCount(0);
 

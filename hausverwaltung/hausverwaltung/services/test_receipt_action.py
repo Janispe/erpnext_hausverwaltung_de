@@ -14,7 +14,7 @@ from frappe.utils import cint
 from PIL import Image
 
 from hausverwaltung.hausverwaltung.page.buchen_cockpit import buchen_cockpit as cockpit
-from hausverwaltung.hausverwaltung.services import bulk_extraction, receipt_pilot as pilot
+from hausverwaltung.hausverwaltung.services import bulk_extraction, receipt_batch as batch, receipt_pilot as pilot
 from hausverwaltung.hausverwaltung.test_booking_safeguards import fixture
 from hausverwaltung.proposals import frappe_service as engine, receipt_action as action
 
@@ -108,7 +108,7 @@ class TestReceiptAction(unittest.TestCase):
 	def _assert_no_invoice(self, receipt):
 		self.assertFalse(frappe.db.exists("Purchase Invoice", {"supplier": self.supplier, "bill_no": receipt.name}))
 
-	def _assert_result(self, receipt, ref, account, person=""):
+	def _assert_result(self, receipt, ref, account, person="", attachment_url=None):
 		result = action.execute(receipt.name, ref)["result"]
 		self.assertEqual(action.execute(receipt.name, ref)["result"], result)
 		pi = frappe.get_doc("Purchase Invoice", result["name"])
@@ -118,7 +118,7 @@ class TestReceiptAction(unittest.TestCase):
 		self.assertEqual(pi.items[0].cost_center, self.center)
 		self.assertTrue(frappe.db.exists("File", {
 			"attached_to_doctype": "Purchase Invoice", "attached_to_name": pi.name,
-			"is_private": 1, "file_url": receipt.file_url,
+			"is_private": 1, "file_url": attachment_url or receipt.file_url,
 		}))
 		self.assertEqual([(line.account, line.credit) for line in je.accounts if line.credit], [(account, 42.50)])
 		self.assertTrue(frappe.db.exists("GL Entry", {"voucher_no": je.name, "account": account, "credit": 42.50}))
@@ -148,6 +148,36 @@ class TestReceiptAction(unittest.TestCase):
 		self._assert_no_invoice(doc)
 		self.assertEqual(self._assert_result(doc, ref, self.cash), ["Created", "Approved", "Succeeded"])
 		self.assertEqual(frappe.db.get_value(engine.PROPOSAL, ref["id"], "decision_by"), bookkeeper)
+
+	def test_manual_batch_booking_uses_the_verified_original_despite_crop_question(self):
+		with io.BytesIO() as output:
+			Image.new("RGB", (32, 32), "white").save(output, "PNG")
+			content = output.getvalue()
+		context = {"kostenstelle": self.center, "zahlungsquelle": "Objektkasse", "zahlungskonto": self.cash}
+		request = SimpleNamespace(files={"file": SimpleNamespace(filename="batch.png", stream=io.BytesIO(content))},
+			host="qa.example.invalid", headers={})
+		with patch.dict(frappe.conf, {"hv_receipt_batch": 1}), patch.object(frappe.local, "request", request):
+			name = batch.upload(str(uuid.uuid4()), context=context)["name"]
+		upload = frappe.get_doc(batch.UPLOAD, name)
+		job = frappe.get_doc(batch.JOB, name)
+		case = {"regions": [[1, 0, 0, 1000, 1000]], "question": "Bitte den Zuschnitt am Original prüfen."}
+		result = batch._save_analysis(job, upload, case, None, {
+			"haendler": self.supplier, "waehrung": "EUR", "gesamtbetrag": 42.50,
+			"positionen": [{"beschreibung": "Testposition", "betrag": 42.50}],
+		}, [content], {})
+		job.db_set({"status": "Questions", "results": batch._json([result])})
+		receipt = frappe.get_doc(pilot.PROPOSAL, result["proposal"])
+		for url in (receipt.file_url, upload.file_url):
+			self.addCleanup((Path(pilot.get_files_path(is_private=1)) / url.rsplit("/", 1)[-1]).unlink, missing_ok=True)
+		booking = self._booking(receipt)
+		with self.assertRaisesRegex(frappe.ValidationError, "Zuschnitt"):
+			self._approve(receipt, booking)
+		with self.assertRaisesRegex(frappe.ValidationError, "Originalbeleg in EUR"):
+			self._approve(receipt, booking | {"manual_review": True, "beleg_eur_bestaetigt": False})
+		ref = self._approve(receipt, booking | {"manual_review": True})
+		self.assertTrue(engine._body(frappe.get_doc(engine.PROPOSAL, ref["id"]))["payload"]["booking"]["manual_review"])
+		self.assertEqual(self._assert_result(receipt, ref, self.cash, attachment_url=upload.file_url),
+			["Created", "Approved", "Succeeded"])
 
 	def test_private_expense_requires_fresh_approval_after_data_change(self):
 		doc = self._receipt("Privat vorgestreckt", self.clearing, "A. Test")

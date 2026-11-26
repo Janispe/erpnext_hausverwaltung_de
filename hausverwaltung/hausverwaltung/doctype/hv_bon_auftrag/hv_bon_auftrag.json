@@ -9,6 +9,9 @@
   "proposal",
   "previous_job",
   "note",
+  "is_upload_question",
+  "answer",
+  "question_run_id",
   "status",
   "issue_id",
   "attempts",
@@ -50,6 +53,21 @@
    "fieldname": "note",
    "fieldtype": "Small Text",
    "label": "Rückfrage"
+  },
+  {
+   "fieldname": "is_upload_question",
+   "fieldtype": "Check",
+   "label": "Rückfrage zum Stapel"
+  },
+  {
+   "fieldname": "answer",
+   "fieldtype": "Long Text",
+   "label": "Antwort zum Stapel"
+  },
+  {
+   "fieldname": "question_run_id",
+   "fieldtype": "Data",
+   "label": "Paperclip-Lauf der Rückfrage"
   },
   {
    "fieldname": "status",

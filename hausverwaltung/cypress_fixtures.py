@@ -1257,7 +1257,7 @@ def prepare_e2e_receipt_manual_batch(upload: str, supplier: str, category: str) 
 	if job.results or job.status != "Queued":
 		frappe.throw("Die E2E-Fixture erwartet einen neuen Bon-Upload.")
 	merchant = frappe.db.get_value("Supplier", supplier, "supplier_name")
-	crop = batch._pages(doc)[0]
+	crop = batch._pages(doc, [1])[1]
 	results = []
 	for index in range(3):
 		question = "Der Rand des dritten Bons ist abgeschnitten." if index == 2 else ""

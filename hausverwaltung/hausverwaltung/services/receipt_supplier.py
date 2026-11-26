@@ -70,11 +70,11 @@ def prepare(job, merchant, comparison):
 		return {"id": proposal.name, "revision": proposal.current_revision, "hash": proposal.revision_hash}
 	key = proposals.RECEIPT_SUPPLIER_PREFIX + uuid4().hex
 	result = proposal_tools.submit_for_verified_job(
-		key=key, package=key, operation="create", doctype="Supplier",
+		job.upload, key=key, package=domain.receipt_upload_package(job.upload), operation="create", doctype="Supplier",
 		values={"supplier_name": merchant},
 		metadata={"title": "Lieferant aus Bon anlegen", "summary": merchant,
 			"sources": [{"label": "Händlername aus dem verknüpften Bon-Ausschnitt"}]},
-		package_meta={"title": "Lieferantenanlage aus Bon-Upload"},
+		package_meta=domain.receipt_upload_package_meta(job.upload),
 	)
 	return {key: result[key] for key in ("id", "revision", "hash")}
 

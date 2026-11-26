@@ -5,11 +5,22 @@ import json
 ACTION = "hv.synthetic_note.set_label/v1"
 POLICY = "hv.synthetic-review/v1"
 RECEIPT_PACKAGE_PREFIX = "RECEIPT-"
+RECEIPT_UPLOAD_PACKAGE_PREFIX = "HV-RECEIPT-UPLOAD-"
+RECEIPT_UPLOAD_DOCTYPE = "HV Bon Upload"
 DOC_CREATE_ACTION = "hv.doc.create/v1"
 DOC_UPDATE_ACTION = "hv.doc.update/v1"
 DOC_SUBMIT_ACTION = "hv.doc.submit/v1"
 DOC_ACTIONS = (DOC_CREATE_ACTION, DOC_UPDATE_ACTION, DOC_SUBMIT_ACTION)
 DOC_POLICY = "hv.doc-review/v1"
+
+
+def receipt_upload_package(upload_name):
+	return RECEIPT_UPLOAD_PACKAGE_PREFIX + upload_name
+
+
+def receipt_upload_package_meta(upload_name):
+	return {"title": "Barauslagen-Stapel", "reference_doctype": RECEIPT_UPLOAD_DOCTYPE,
+		"reference_name": upload_name}
 
 
 def encode(value):
