@@ -264,14 +264,14 @@ def approve(name, source, booking, binding=None, context=None):
 			if binding is not None:
 				frappe.throw("Die Bon-Fassung hat sich geändert. Bitte die Buchungs-Inbox neu laden.")
 			key = _key(receipt)
-		if receipt.receipt_upload:
-			package = domain.receipt_upload_package(receipt.receipt_upload)
-			package_meta = domain.receipt_upload_package_meta(receipt.receipt_upload)
-		else:
-			package = domain.RECEIPT_PACKAGE_PREFIX + key
-			package_meta = {"title": f"Barauslage {receipt.name}", "reference_doctype": pilot.PROPOSAL,
-				"reference_name": receipt.name}
-		engine._lock_package(package, create=True, package_meta=package_meta)
+			if receipt.receipt_upload:
+				package = domain.receipt_upload_package(receipt.receipt_upload)
+				package_meta = domain.receipt_upload_package_meta(receipt.receipt_upload)
+			else:
+				package = domain.RECEIPT_PACKAGE_PREFIX + key
+				package_meta = {"title": f"Barauslage {receipt.name}", "reference_doctype": pilot.PROPOSAL,
+					"reference_name": receipt.name}
+			engine._lock_package(package, create=True, package_meta=package_meta)
 			doc = engine._create_proposal(ACTION, receipt.name, package, key, domain.digest(operation))
 			event = "Created"
 		engine._revision(doc, operation, [], {}, policy=POLICY, preview=preview)
