@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { actionResponse, benchExecute, call, dialog, expect, fixtures, test } from "./frappe.js";
+import { actionResponse, apiPost, benchExecute, call, dialog, expect, fixtures, test } from "./frappe.js";
 import { setDialog } from "./cockpit.js";
 
 const pilot = "hausverwaltung.hausverwaltung.services.receipt_pilot";
@@ -160,4 +160,71 @@ test("Bon-Uploads verlinken zwei getrennte Paperclip-Aufträge im neuen Tab", as
 	const conversation = await popup;
 	await expect(conversation).toHaveURL(secondUrl);
 	await expect(conversation.getByRole("heading", { name: "Synthetisches zweites Gespräch" })).toBeVisible();
+});
+
+test("Drei Bons trotz offener Punkte einzeln prüfen", async ({ desk }) => {
+	const batch = "hausverwaltung.hausverwaltung.services.receipt_batch";
+	const seed = benchExecute(`${fixtures}.seed_e2e_receipts`);
+	const context = { kostenstelle: seed.costCenter, zahlungsquelle: "Objektkasse", zahlungskonto: seed.cash };
+	const filename = `manuelle-pruefung-${randomUUID()}.png`;
+	const upload = await desk.request.post(`/api/method/${batch}.upload`, {
+		headers: { "X-Frappe-CSRF-Token": await desk.evaluate(() => frappe.csrf_token) },
+		multipart: {
+			request_id: randomUUID(), context: JSON.stringify(context),
+			file: { name: filename, mimeType: "image/png", buffer: Buffer.from(seed.original, "base64") },
+		},
+	});
+	expect(upload.ok(), await upload.text()).toBe(true);
+	const { message } = await upload.json();
+	const [first, second] = benchExecute(`${fixtures}.prepare_e2e_receipt_manual_batch`,
+		[message.name, seed.supplier, seed.nonBk.name]);
+	const reviewBon = async (index) => {
+		await openReceipt(desk, `Bon ${index} · ${filename}`);
+		await desk.getByRole("button", { name: "Bon prüfen", exact: true }).click();
+		await expect(dialog(desk)).toBeVisible();
+	};
+
+	await reviewBon(1);
+	await expect(dialog(desk).getByText("Kontierung bitte mit dem Bon abgleichen.")).toBeVisible();
+	await dialog(desk).getByRole("button", { name: "Hinweise überspringen und manuell prüfen" }).click();
+	await expect(dialog(desk).getByText("Kontierung bitte mit dem Bon abgleichen.")).toBeHidden();
+	await expect(dialog(desk).locator('[data-fieldname="lieferant"] input')).toBeVisible();
+	await dialog(desk).locator(".btn-modal-close").click();
+	await expect(dialog(desk)).toHaveCount(0);
+	const firstBon = await call(desk, `${inbox}.get_vorschlag_full`, { name: first });
+	expect(firstBon.receipt_batch.revisions[0].account_comparison.questions)
+		.toContain("Kontierung bitte mit dem Bon abgleichen.");
+	expect(firstBon.receipt_review.status).toBe("Pending");
+
+	await reviewBon(3);
+	await expect(dialog(desk).getByText("Bitte den Zuschnitt oder die Aufteilung des Bons zuerst klären.")).toBeVisible();
+	await expect(dialog(desk).getByRole("button", { name: "Freigeben und buchen" })).toBeDisabled();
+	await dialog(desk).locator(".btn-modal-close").click();
+	await expect(dialog(desk)).toHaveCount(0);
+
+	await reviewBon(2);
+	await expect(dialog(desk).getByText("Pflichtangaben klären")).toBeVisible();
+	const secondBon = await call(desk, `${inbox}.get_vorschlag_full`, { name: second });
+	const denied = await apiPost(desk, `${engine}.approve`, {
+		name: second, source: secondBon.receipt_review.source,
+		booking: {
+			lieferant: seed.supplier, rechnungsdatum: "2026-10-04", rechnungsname: second,
+			beleg_brutto_bestaetigt: 42.50, beleg_eur_bestaetigt: true,
+			positionen: [{ betrag: 42.50, kostenart: seed.nonBk.name, umlagefaehig: "Kostenart nicht umlagefaehig" }],
+		},
+	});
+	expect(denied.ok()).toBe(false);
+	expect(await denied.text()).toContain("Welche Kostenstelle ist diesem Gebäude eindeutig zugeordnet?");
+	await dialog(desk).locator('.frappe-control[data-fieldname="kostenstelle"] input').fill(context.kostenstelle);
+	await dialog(desk).locator('.frappe-control[data-fieldname="zahlungsquelle"] select').selectOption(context.zahlungsquelle);
+	await dialog(desk).locator('.frappe-control[data-fieldname="zahlungskonto"] input').fill(context.zahlungskonto);
+	await dialog(desk).locator('.frappe-control[data-fieldname="beleg_brutto_bestaetigt"] input').fill("42.50");
+	await dialog(desk).getByRole("checkbox", { name: "Der Originalbeleg ist in EUR ausgestellt" }).check();
+	const booking = desk.waitForResponse((response) => new URL(response.url()).pathname === `/api/method/${engine}.execute`);
+	const approved = await actionResponse(desk, `${engine}.approve`, () =>
+		dialog(desk).getByRole("button", { name: "Freigeben und buchen" }).click());
+	expect(approved.ok(), await approved.text()).toBe(true);
+	const executed = await booking;
+	expect(executed.ok(), await executed.text()).toBe(true);
+	expect((await executed.json()).message.status).toBe("Succeeded");
 });

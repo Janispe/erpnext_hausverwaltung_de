@@ -1248,6 +1248,39 @@ def prepare_e2e_receipt(name: str, supplier: str, category: str) -> None:
 	})})
 
 
+def prepare_e2e_receipt_manual_batch(upload: str, supplier: str, category: str) -> list[str]:
+	_check_disposable_site()
+	from hausverwaltung.hausverwaltung.services import receipt_batch as batch
+
+	job = frappe.get_doc(batch.JOB, upload, for_update=True)
+	doc = frappe.get_doc(batch.UPLOAD, upload)
+	if job.results or job.status != "Queued":
+		frappe.throw("Die E2E-Fixture erwartet einen neuen Bon-Upload.")
+	merchant = frappe.db.get_value("Supplier", supplier, "supplier_name")
+	crop = batch._pages(doc)[0]
+	results = []
+	for index in range(3):
+		question = "Der Rand des dritten Bons ist abgeschnitten." if index == 2 else ""
+		case = {"regions": [[1, 0, 0, 1000, 1000]], "question": question}
+		raw = {"haendler": merchant, "datum": "2026-10-04", "waehrung": "EUR", "gesamtbetrag": 42.50,
+			"positionen": [{"beschreibung": "Testmaterial", "betrag": 42.50}]}
+		comparison = {"supplier": {"name": supplier, "supplier_name": merchant}, "candidates": [],
+			"questions": ["Kontierung bitte mit dem Bon abgleichen."] if index == 0 else []}
+		result = batch._save_analysis(job, doc, case, None, raw, [crop], comparison)
+		bon = frappe.get_doc(batch.pilot.PROPOSAL, result["proposal"])
+		result["data"]["fields"]["rechnungsname"] = bon.name
+		result["data"]["buchungspositionen"] = [
+			{"betrag": 42.50, "kostenart": category, "umlagefaehig": "Kostenart nicht umlagefaehig"},
+		]
+		bon.db_set("extracted_data", batch._json(result["data"]))
+		if index == 1:
+			batch.pilot.set_context(bon, {"zahlungskonto": batch.pilot._context(doc.receipt_context)["zahlungskonto"]})
+		results.append(result)
+		job.db_set("results", batch._json(results))
+	job.db_set({"total_receipts": 3, "processed_receipts": 3, "status": "Questions"})
+	return [result["proposal"] for result in results]
+
+
 def _ensure_e2e_rent_income_accounts(company: str) -> None:
 	settings = frappe.get_single("Hausverwaltung Einstellungen")
 	if any(row.company == company for row in settings.income_accounts):

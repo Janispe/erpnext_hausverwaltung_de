@@ -116,6 +116,8 @@ die Agent-Konfiguration (Pfade anpassen):
     "command": "/checkout/hausverwaltung/scripts/codex",
     "cwd": "/isolated/worker",
     "model": "gpt-6.2-sol",
+    "dangerouslyBypassApprovalsAndSandbox": false,
+    "extraArgs": ["-c", "sandbox_mode=\"read-only\""],
     "instructionsFilePath": "/checkout/hausverwaltung/docs/paperclip-barauslagen-codex-agent.md",
     "timeoutSec": 2400,
     "env": {
@@ -164,6 +166,13 @@ Bis zur Entscheidung blockiert der Auftrag ohne Timer. Nach einem
 Ausführungsfehler zeigt die Inbox den Fehlerstatus. Nach Ablehnung und
 Wiederaufnahme bleibt der betroffene Bon zur Klärung markiert. Die
 Buchungsfreigabe erfolgt anschließend separat in **Buchungs-Inbox**.
+
+Mit **Bon prüfen** kann jeder gespeicherte Bon einzeln geöffnet werden.
+**Hinweise überspringen und manuell prüfen** blendet die Analysehinweise
+nur im Dialog aus. Fehlende Pflichtangaben werden dort ergänzt. Eine offene
+Zuschnittfrage oder ein ausstehender Lieferantenvorschlag sperrt die
+Freigabe des betroffenen Bons. Die übrigen gespeicherten Bons können
+weiter geprüft werden.
 
 Für einen synthetischen Inferenzlauf `CODEX_ROLLOUT_TRACE_ROOT` vorübergehend
 auf ein privates Verzeichnis setzen. Vergleiche die Zell-ID der

@@ -447,6 +447,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			: HV_PI_DIRECT_PAYMENT_TYPES.includes(_default_zahlungsart);
 
 	const fields = [
+		...(opts._receipt ? [{ fieldtype: "HTML", fieldname: "receipt_review_notes" }] : []),
 		{
 			fieldtype: "Link",
 			fieldname: "aus_vorlage",
@@ -501,10 +502,10 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			),
 		},
 		{ fieldtype: "Section Break", label: __("Bezahlung") },
+		...(opts._receipt ? opts._receipt_context_fields : [
 		{
 			fieldtype: "Select",
 			fieldname: "zahlungsart",
-			read_only: opts._receipt ? 1 : 0,
 			label: __("Zahlungsart"),
 			options: [
 				"Überweisung / Bankimport",
@@ -532,7 +533,6 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		{
 			fieldtype: "Check",
 			fieldname: "zahlung_sofort",
-			read_only: opts._receipt ? 1 : 0,
 			label: __("Direkt ausgleichen"),
 			default: _default_zahlung_sofort ? 1 : 0,
 			depends_on: "eval:['Barzahlung','Vorschuss/Auslage','Sonstige Verrechnung'].includes(doc.zahlungsart)",
@@ -544,11 +544,10 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			},
 		},
 		{
-			fieldtype: opts._receipt ? "Data" : "Link",
+			fieldtype: "Link",
 			fieldname: "zahlungskonto",
-			read_only: opts._receipt ? 1 : 0,
 			label: __("Zahlungs-/Verrechnungskonto"),
-			options: opts._receipt ? "" : "Account",
+			options: "Account",
 			default: opts.zahlungskonto || "",
 			depends_on: "eval:doc.zahlung_sofort",
 			description: __(
@@ -566,15 +565,19 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 					};
 				},
 		},
+		]),
 		{
 			fieldtype: "Small Text",
 			fieldname: "zahlungsbemerkung",
 			label: __("Zahlungsbemerkung"),
 			default: opts.zahlungsbemerkung || "",
-			depends_on: "eval:doc.zahlung_sofort",
+			depends_on: opts._receipt ? undefined : "eval:doc.zahlung_sofort",
 		},
 		...(opts._receipt ? [
-			{ fieldtype: "HTML", options: `<a href="${frappe.utils.escape_html(opts._attached_file)}" target="_blank" rel="noopener">${__("Originalbeleg öffnen")} ↗</a>` },
+			{ fieldtype: "HTML", options: `<a href="${frappe.utils.escape_html(opts._receipt_original || opts._attached_file)}"
+				target="_blank" rel="noopener">${__("Originalbeleg öffnen")} ↗</a>
+				${opts._receipt_original ? ` · <a href="${frappe.utils.escape_html(opts._attached_file)}"
+					target="_blank" rel="noopener">${__("Bon-Ausschnitt öffnen")} ↗</a>` : ""}` },
 			{ fieldtype: "Currency", fieldname: "beleg_brutto_bestaetigt", label: __("Bestätigter Brutto-Endbetrag (EUR)"), default: opts.beleg_brutto_bestaetigt, reqd: 1 },
 			{ fieldtype: "Check", fieldname: "beleg_eur_bestaetigt", label: __("Der Originalbeleg ist in EUR ausgestellt"), reqd: 1 },
 		] : []),
@@ -718,17 +721,18 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 	];
 
 	const dialog = new frappe.ui.Dialog({
-		title: __("Ausgabe erfassen"),
+		title: opts._receipt ? __("Bon prüfen") : __("Ausgabe erfassen"),
 		size: "extra-large",
 		fields,
 		primary_action_label: opts._receipt ? __("Freigeben und buchen") : __("Buchen"),
 		primary_action(values) {
 			if (opts._receipt) {
-				values.zahlungsart = opts.zahlungsart;
+				if (opts._receipt_blocker || !opts._receipt_review) return;
+				values._receipt_context = Object.fromEntries(opts._receipt_context_fields.map(({ fieldname }) =>
+					[fieldname, values[fieldname] || ""]));
 				values.zahlung_sofort = 1;
-				values.zahlungskonto = opts.zahlungskonto;
 				for (const row of values.positionen || []) {
-					row.kostenstelle = opts._receipt_kostenstelle;
+					row.kostenstelle = values.kostenstelle;
 					row.umlagefaehig = {
 						"nicht umlegbar": "Kostenart nicht umlagefaehig",
 						"umlegbar": "Betriebskostenart",
@@ -774,6 +778,23 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 	}
 
 	dialog.show();
+	if (opts._receipt) {
+		const escape = frappe.utils.escape_html;
+		const list = (items) => `<ul>${items.map((item) => `<li>${escape(item)}</li>`).join("")}</ul>`;
+		const notes = dialog.fields_dict.receipt_review_notes.$wrapper;
+		notes.html(`${opts._receipt_blocker ? `<p class="text-danger">${escape(opts._receipt_blocker)}</p>` : ""}
+			${opts._receipt_questions?.length ? `<p><strong>${__("Pflichtangaben klären")}</strong></p>
+				${list(opts._receipt_questions)}` : ""}
+			${opts._warnings?.length ? `<div class="hv-receipt-hints"><p><strong>${__("Hinweise zur KI-Analyse")}</strong></p>
+				${list(opts._warnings)}
+				<p><button type="button" class="btn btn-default btn-sm hv-skip-receipt-hints">
+					${__("Hinweise überspringen und manuell prüfen")}</button></p></div>` : ""}`);
+		notes.find(".hv-skip-receipt-hints").on("click", () => {
+			notes.find(".hv-receipt-hints").hide();
+			dialog.fields_dict.lieferant.$input.trigger("focus");
+		});
+		if (opts._receipt_blocker) dialog.get_primary_btn().prop("disabled", true);
+	}
 
 	if (has_explicit_defaults) {
 		// Lieferant + Datum + Wertstellungsdatum sind bereits als field-default
@@ -788,8 +809,8 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		show_draft_banner(dialog, stored_draft, HV_DRAFT_KEY_PI);
 	}
 
-	if (opts && (opts._confidence || opts._warnings || opts._used_vision)) {
-		apply_extraction_hints(dialog, opts);
+	if (opts && (opts._confidence || opts._warnings || opts._used_vision) && (!opts._receipt || opts._confidence)) {
+		apply_extraction_hints(dialog, opts._receipt ? { ...opts, _warnings: [] } : opts);
 	}
 
 	apply_eingabemodus(dialog, { clear_existing: !opts._receipt });
@@ -1115,7 +1136,8 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 	const submit = review
 		? frappe.call({
 			method: `${HV_RECEIPT_ACTION_API}.approve`,
-			args: { name: args.vorschlag_name, source: review.source, binding: review.binding, booking },
+			args: { name: args.vorschlag_name, source: review.source, binding: review.binding, booking,
+				context: values._receipt_context },
 		}).then(async ({ message }) => {
 			review.binding = message.binding;
 			try {

@@ -181,7 +181,7 @@ def _plan(receipt, booking):
 	receipt_batch.require_bookable(receipt)
 	context = pilot.review_context(receipt)
 	if context["fragen"]:
-		frappe.throw("Bitte zuerst die offenen Barauslagen-Angaben in der Buchungs-Inbox klären.")
+		frappe.throw(context["fragen"][0])
 	try:
 		original, _ = pilot.verified_original(receipt, for_update=True)
 	except (OSError, ValueError, frappe.DoesNotExistError):
@@ -231,7 +231,7 @@ def _invalidate(doc, cause):
 
 
 @frappe.whitelist(methods=["POST"])
-def approve(name, source, booking, binding=None):
+def approve(name, source, booking, binding=None, context=None):
 	receipt = _receipt(name)
 	doc, body = _proposal(receipt, lock=True)
 	if doc and doc.status == "Succeeded":
@@ -243,6 +243,8 @@ def approve(name, source, booking, binding=None):
 		frappe.throw("Der Bon hat sich geändert. Bitte den Originalbeleg und die Buchungsdaten erneut prüfen.")
 
 	booking = _booking(booking)
+	if context is not None:
+		pilot.set_context(receipt, context)
 	preview, *_ = _plan(receipt, booking)
 	operation = {"target": receipt.name, "booking": booking}
 	with service_scope():

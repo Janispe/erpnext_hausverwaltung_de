@@ -364,8 +364,8 @@ def _save_analysis(job, doc, case, proposal, raw, crops, comparison):
 				question = "Der neue Zuschnitt überlappt einen anderen Bon. Bitte Aufteilung oder Zusammenlegung klären."
 				break
 	data = pilot._normalize_analysis(raw, {}, manual_accounting=True)
-	question = question or pilot._text(raw.get("frage"), 500)
-	supplier_proposal = None if question else receipt_supplier.prepare(job, pilot._text(raw.get("haendler")), comparison)
+	hint = pilot._text(raw.get("frage"), 500)
+	supplier_proposal = None if question or hint else receipt_supplier.prepare(job, pilot._text(raw.get("haendler")), comparison)
 	crop_bytes, extension = _attachment_bytes(crops)
 	if len(crop_bytes) > MAX_CROP_BYTES:
 		raise ValueError("Bon-Ausschnitt überschreitet die maximale Größe.")
@@ -387,6 +387,8 @@ def _save_analysis(job, doc, case, proposal, raw, crops, comparison):
 	}
 	if question:
 		data["warnings"].append(question)
+	if hint and hint != question:
+		data["warnings"].append(hint)
 	proposal.db_set({
 		"status": "Ready", "receipt_analysis": job.name, "file_url": attachment.file_url,
 		"extracted_data": _json(data), "error_message": "",
@@ -692,21 +694,29 @@ def inbox_detail(proposal):
 		"revisions": revisions, "source": proposal.receipt_analysis,
 		"account_comparison": current_comparison, "comparison_stale": comparison_stale, "current_analysis": current_analysis,
 		"supplier_proposal": current_supplier,
+		"booking_blocker": booking_blocker(proposal, current_job),
 	}
 
 
-def require_bookable(proposal):
-	if not proposal.get("receipt_upload"):
-		return
-	job = frappe.get_doc(JOB, proposal.receipt_analysis)
+def booking_blocker(proposal, job):
 	analysis = _prior(proposal)
-	if job.status not in {"Done", "Questions", receipt_supplier.WAITING} or not analysis or analysis["job"] != proposal.receipt_analysis:
-		frappe.throw("Die aktuelle Bonanalyse muss zuerst abgeschlossen sein.")
-	for result in json.loads(job.results or "[]"):
-		if result["proposal"] == proposal.name and result.get("supplier_proposal") and result["supplier_state"] != "Succeeded":
-			frappe.throw("Bitte zuerst den Lieferantenvorschlag klären und den Paperclip-Auftrag fortsetzen.")
+	if proposal.status != "Ready" or not analysis or analysis["job"] != job.name:
+		return "Die aktuelle Analyse dieses Bons muss zuerst abgeschlossen sein."
 	if analysis["question"]:
-		frappe.throw("Bitte den Zuschnitt oder die Aufteilung des Bons zuerst klären.")
+		return "Bitte den Zuschnitt oder die Aufteilung des Bons zuerst klären."
+	for result in json.loads(job.results or "[]"):
+		if result["proposal"] == proposal.name:
+			if result.get("supplier_proposal") and result["supplier_state"] != "Succeeded":
+				return "Bitte zuerst den Lieferantenvorschlag klären und den Paperclip-Auftrag fortsetzen."
+			return None
+	return "Die aktuelle Analyse dieses Bons muss zuerst abgeschlossen sein."
+
+
+def require_bookable(proposal):
+	if proposal.get("receipt_upload"):
+		job = frappe.get_doc(JOB, proposal.receipt_analysis)
+		if reason := booking_blocker(proposal, job):
+			frappe.throw(reason)
 
 
 def verified_crop(proposal, *, for_update=False):

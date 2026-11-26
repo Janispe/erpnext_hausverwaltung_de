@@ -209,10 +209,14 @@ def update_context(name: str, context) -> dict:
 	doc.check_permission("write")
 	if not doc.receipt_digest or doc.status == "Booked" or doc.linked_purchase_invoice:
 		frappe.throw("Die Stapelangaben dieses Vorschlags können nicht geändert werden.")
+	set_context(doc, context)
+	return review_context(doc)
+
+
+def set_context(doc, context):
 	new_context = _context(context)
 	if new_context != _context(doc.receipt_context):
 		doc.db_set("receipt_context", json.dumps(new_context, ensure_ascii=False))
-	return review_context(doc)
 
 
 @frappe.whitelist(methods=["GET"])

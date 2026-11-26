@@ -724,11 +724,9 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		const closed = ["Booked", "Cancelled"].includes(row.status);
 		const batch = full?.receipt_batch;
 		const supplier = batch?.supplier_proposal;
-		const can_book = row.status === "Ready" && (!row.is_receipt_batch ||
-			(batch && (HV_RECEIPT_DONE.has(batch.job.status) || batch.job.status === "WaitingForSupplier")
-				&& (!supplier || supplier.status === "Succeeded" && data?.fields?.lieferant)
-				&& !data?.analysis?.question)) && (!row.is_receipt ||
-			(review && review.status !== "Succeeded" && receipt && !receipt.fragen.length && (!data?.waehrung || data.waehrung === "EUR")));
+		const can_book = row.is_receipt
+			? Boolean(receipt && !closed && (row.status === "Ready" || data?.analysis))
+			: row.status === "Ready";
 		const can_skip = !row.is_receipt_batch && ["Pending", "Processing", "Ready"].includes(row.status);
 		const can_reactivate = !row.is_receipt_batch && ["Skipped", "Error"].includes(row.status);
 		const can_reprocess = !closed && !row.is_receipt_batch;
@@ -890,7 +888,12 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		const receipt = full.receipt;
 		const review = full.receipt_review;
 		const booking = review?.booking;
-		if (receipt?.fragen.length) return;
+		const batch = full.receipt_batch;
+		const blocker = (batch?.booking_blocker && batch.supplier_proposal?.message)
+			|| batch?.booking_blocker
+			|| (row.status !== "Ready" && __("Die aktuelle Analyse dieses Bons muss zuerst abgeschlossen sein."))
+			|| (data.waehrung && data.waehrung !== "EUR" && __("Fremdwährungsbelege bitte außerhalb des Barauslagen-Piloten erfassen."))
+			|| (!review && __("Die Barauslagen-Freigabe benötigt eine angemeldete Buchhaltungssitzung."));
 
 		// Polling sofort pausieren, sonst kann ein 3-Sek-Tick mid-Dialog
 		// den PDF-Embed unter dem Modal neu mounten (-> Browser-Tab-Hang).
@@ -920,16 +923,24 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 			...(receipt ? {
 				_receipt: true,
 				_receipt_review: review,
+				_receipt_blocker: blocker,
+				_receipt_questions: receipt.fragen,
+				_receipt_original: batch?.original,
+				_receipt_context_fields: hv_receipt_context_fields(receipt).map((field) => ({
+					...field,
+					reqd: field.fieldname !== "person",
+					...(field.fieldname === "person" ? { mandatory_depends_on: field.depends_on } : {}),
+				})),
 				_receipt_kostenstelle: receipt.kostenstelle,
 				zahlungsart: receipt.zahlungsart,
 				zahlungskonto: receipt.zahlungskonto,
 				zahlung_sofort: true,
 			} : {}),
 			_confidence: data.confidence || {},
-			_warnings: data.warnings || [],
+			_warnings: [...new Set([...(data.warnings || []), ...(batch?.account_comparison?.questions || [])])],
 			_attached_file: full.file_url,
 			_used_vision: !!data.used_vision,
-			_lieferant_neu: data.lieferant_neu || null,
+			_lieferant_neu: batch ? null : data.lieferant_neu || null,
 			_vorschlag_name: row.name,
 			_after_book: () => {
 				delete state.full_cache[row.name];
