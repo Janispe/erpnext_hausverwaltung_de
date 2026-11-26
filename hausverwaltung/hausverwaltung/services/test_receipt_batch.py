@@ -19,7 +19,8 @@ from hausverwaltung.hausverwaltung.agent_tools import accounting_evidence
 from hausverwaltung.hausverwaltung.services import bulk_extraction
 from hausverwaltung.hausverwaltung.services import receipt_batch as batch
 from hausverwaltung.hausverwaltung.services import receipt_evidence
-from hausverwaltung.proposals import receipt_action
+from hausverwaltung.hausverwaltung.services import receipt_supplier
+from hausverwaltung.proposals import frappe_service as engine, receipt_action
 
 
 class TestReceiptBatch(IntegrationTestCase):
@@ -422,3 +423,89 @@ class TestReceiptBatch(IntegrationTestCase):
 			self.assertRaises(frappe.PermissionError),
 		):
 			batch._run_scope(token)
+
+	def test_supplier_proposal_waits_for_human_execution_and_resumes(self):
+		suffix = uuid.uuid4().hex[:10]
+		if not frappe.db.exists("Role", batch.AGENT_ROLE):
+			frappe.get_doc({"doctype": "Role", "role_name": batch.AGENT_ROLE}).insert()
+		agent = frappe.get_doc({
+			"doctype": "User", "email": f"receipt-{suffix}@hv-test.invalid", "first_name": "Bon Test",
+			"send_welcome_email": 0, "user_type": "System User",
+			"roles": [{"role": engine.AGENT}, {"role": batch.AGENT_ROLE}],
+		}).insert().name
+		frappe.permissions.add_permission("Supplier", batch.AGENT_ROLE, ptype="read")
+		self.addCleanup(frappe.clear_cache, doctype="Supplier")
+		self.addCleanup(frappe.set_user, "Administrator")
+		known, unknown, rejected, ambiguous = (f"Bon {kind} {suffix}" for kind in (
+			"Bekannt", "Neu", "Abgelehnt", "Mehrdeutig",
+		))
+		for name, label in ((known, known), (ambiguous, ambiguous), (ambiguous + " 2", ambiguous)):
+			frappe.get_doc({
+				"doctype": "Supplier", "name": name, "supplier_name": label, "disabled": 0,
+			}).db_insert()
+		image = self.fixture()
+		first, repeated = self.upload(image), self.upload(image)
+		merchants = [known, unknown, rejected, ambiguous]
+		regions = [[1, start, 0, start + 245, 1000] for start in range(0, 1000, 250)]
+		inventory = {"bons": [{"ausschnitte": [region]} for region in regions], "leere_seiten": []}
+		one_receipt = {"bons": [{"ausschnitte": [[1, 0, 0, 1000, 1000]]}], "leere_seiten": []}
+
+		with patch.dict(frappe.conf, hv_receipt_codex=1, hv_receipt_supplier_proposals=1, hv_proposals_enabled=1):
+			frappe.set_user(agent)
+			self.assertFalse(frappe.has_permission("Supplier", "create"))
+			for job_id, cases, names in ((first, inventory, merchants), (repeated, one_receipt, [unknown])):
+				with self.scope(job_id):
+					self.submit(batch._next_step()["task"], cases)
+					for merchant in names:
+						task = batch._next_step()["task"]
+						self.submit(task, self.raw_analysis(12.50) | {"haendler": merchant})
+						batch.submit_step(task["step"])
+					self.assertEqual(batch._next_step()["status"], receipt_supplier.WAITING)
+			results = json.loads(frappe.db.get_value(batch.JOB, first, "results"))
+			known_bon, unknown_bon, rejected_bon, ambiguous_bon = results
+			self.assertEqual(known_bon["comparison"]["supplier"]["name"], known)
+			self.assertFalse(ambiguous_bon.get("supplier_proposal"))
+			self.assertIn(accounting_evidence.SUPPLIER_QUESTION, ambiguous_bon["comparison"]["questions"])
+			pid = unknown_bon["supplier_proposal"]
+			self.assertEqual(json.loads(frappe.db.get_value(batch.JOB, repeated, "results"))[0]["supplier_proposal"], pid)
+			self.assertFalse(frappe.db.exists("Supplier", {"supplier_name": unknown}))
+			self.assertFalse(frappe.db.exists("Purchase Invoice", {"supplier": unknown}))
+			with self.assertRaises(frappe.PermissionError):
+				engine.view(rejected_bon["supplier_proposal"])
+			with self.assertRaises(frappe.PermissionError):
+				engine.list_packages()
+			self.assertEqual(batch.list_uploads(), [])
+
+			frappe.set_user("Administrator")
+			links = next(upload for upload in batch.list_uploads() if upload.name == first).jobs[0]["supplier_proposals"]
+			self.assertEqual(len(links), 2)
+			self.assertIn(pid, next(link["url"] for link in links if link["bon"] == unknown_bon["proposal"]))
+			batch.require_bookable(frappe.get_doc(batch.pilot.PROPOSAL, known_bon["proposal"]))
+			with self.assertRaises(frappe.ValidationError):
+				batch.require_bookable(frappe.get_doc(batch.pilot.PROPOSAL, unknown_bon["proposal"]))
+			accepted, declined = [engine.view(result["supplier_proposal"]) for result in (unknown_bon, rejected_bon)]
+			bind = lambda detail: {key: detail[key] for key in ("id", "revision", "hash")}
+			sid = "test-receipt-review"
+			with (
+				patch.object(frappe.local, "request", SimpleNamespace(cookies={"sid": sid}, headers={}), create=True),
+				patch.object(frappe.local, "login_manager", SimpleNamespace(user="Administrator"), create=True),
+				patch.dict(frappe.session, sid=sid),
+			):
+				engine.review(bind(accepted), True)
+				engine.review(bind(declined), False, "Synthetische Ablehnung")
+				self.assertFalse(frappe.db.exists("Supplier", {"supplier_name": unknown}))
+				with patch.object(engine.doc_actions, "execute", side_effect=frappe.ValidationError):
+					self.assertFalse(engine.execute_ready(accepted["package"], [bind(accepted)])[0]["ok"])
+				self.assertTrue(engine.view(pid)["execution_failed"])
+				supplier_id = engine.execute(bind(accepted))["result"]["id"]
+			frappe.set_user(agent)
+			with self.scope(first):
+				self.assertEqual(batch._next_step()["status"], "Questions")
+			frappe.set_user("Administrator")
+			full = bulk_extraction.get_vorschlag_full(unknown_bon["proposal"])
+			self.assertEqual(full["data"]["fields"]["lieferant"], supplier_id)
+			self.assertEqual(full["receipt_batch"]["supplier_proposal"]["status"], "Succeeded")
+			self.assertFalse(frappe.db.exists("Purchase Invoice", {"supplier": supplier_id}))
+			full = bulk_extraction.get_vorschlag_full(rejected_bon["proposal"])
+			self.assertEqual(full["receipt_batch"]["supplier_proposal"]["status"], "Rejected")
+			self.assertFalse(frappe.db.exists("Supplier", {"supplier_name": rejected}))

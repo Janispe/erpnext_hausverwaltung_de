@@ -20,6 +20,7 @@ from PIL import Image
 
 from hausverwaltung.hausverwaltung.agent_tools import accounting_evidence
 from hausverwaltung.hausverwaltung.services import receipt_evidence, receipt_pilot as pilot
+from hausverwaltung.hausverwaltung.services import receipt_supplier
 from hausverwaltung.receipt_media import render_pages
 
 UPLOAD = "HV Bon Upload"
@@ -364,6 +365,7 @@ def _save_analysis(job, doc, case, proposal, raw, crops, comparison):
 				break
 	data = pilot._normalize_analysis(raw, {}, manual_accounting=True)
 	question = question or pilot._text(raw.get("frage"), 500)
+	supplier_proposal = None if question else receipt_supplier.prepare(job, pilot._text(raw.get("haendler")), comparison)
 	crop_bytes, extension = _attachment_bytes(crops)
 	if len(crop_bytes) > MAX_CROP_BYTES:
 		raise ValueError("Bon-Ausschnitt überschreitet die maximale Größe.")
@@ -394,6 +396,7 @@ def _save_analysis(job, doc, case, proposal, raw, crops, comparison):
 	return {
 		"proposal": proposal.name, "data": data, "comparison": comparison,
 		"comparison_cost_center": receipt_evidence.cost_center(proposal),
+		**({"supplier_proposal": supplier_proposal, "supplier_state": "Pending"} if supplier_proposal else {}),
 	}
 
 
@@ -464,6 +467,28 @@ def _step_error(job, exc):
 	})
 
 
+def _completion_status(doc, results):
+	if any(receipt_supplier.waiting(result) for result in results):
+		return receipt_supplier.WAITING
+	questions = any(result["data"]["warnings"] or result.get("comparison", {}).get("questions") for result in results)
+	return "Questions" if questions or pilot.review_context(doc)["fragen"] else "Done"
+
+
+def _resume_suppliers(job):
+	_, results = _queue_state(job)
+	changed = False
+	for result in results:
+		if not receipt_supplier.resolve(job, result):
+			continue
+		proposal = frappe.get_doc(pilot.PROPOSAL, result["proposal"], for_update=True)
+		if proposal.receipt_analysis == job.name and proposal.status == "Ready" and not proposal.linked_purchase_invoice:
+			proposal.db_set("extracted_data", _json(result["data"]))
+		changed = True
+	if changed:
+		doc = frappe.get_doc(pilot.PROPOSAL, job.proposal) if job.proposal else frappe.get_doc(UPLOAD, job.upload)
+		job.db_set({"results": _json(results), "status": _completion_status(doc, results)})
+
+
 @frappe.whitelist(methods=["POST"])
 def next_step():
 	if cint(frappe.conf.get("hv_receipt_codex")):
@@ -483,6 +508,9 @@ def _next_step(*, codex=False):
 	if not job:
 		# Paperclip may schedule the process before the outbox commits its issue ID.
 		return scope | {"status": "AwaitingDelivery"}
+	if job.status == receipt_supplier.WAITING:
+		_resume_suppliers(job)
+		return scope | {"status": job.status}
 	if job.status in DONE:
 		return scope | {"status": job.status}
 	upload_doc, proposal = _active_target(job)
@@ -509,7 +537,7 @@ def submit_step(step, result=None, crops=None, failed=False, evidence_digest=Non
 	job, scope = _agent_job()
 	if not job:
 		raise frappe.PermissionError("Für diesen Lauf ist kein Auftrag hinterlegt.")
-	if job.status in DONE:
+	if job.status in DONE | {receipt_supplier.WAITING}:
 		return scope | {"status": job.status}
 	upload_doc, proposal = _active_target(job)
 	if not upload_doc:
@@ -556,10 +584,7 @@ def submit_step(step, result=None, crops=None, failed=False, evidence_digest=Non
 			job.db_set({"results": _json(results), "processed_receipts": len(results)})
 		status = "Running"
 		if len(results) == len(cases):
-			questions = any(result["data"]["warnings"] or result.get("comparison", {}).get("questions") for result in results)
-			if not questions:
-				questions = bool(pilot.review_context(proposal or upload_doc)["fragen"])
-			status = "Questions" if questions else "Done"
+			status = _completion_status(proposal or upload_doc, results)
 		job.db_set({"status": status, "error_message": ""})
 	except (ValueError, RuntimeError, OSError, KeyError, TypeError, AttributeError, Image.DecompressionBombError) as exc:
 		frappe.db.rollback(save_point="receipt_analysis_step")
@@ -587,11 +612,23 @@ def _issue_link(issue_id):
 		return None
 
 
+def _supplier_links(job):
+	links = []
+	for result in json.loads(job.results or "[]"):
+		if not result.get("supplier_proposal"):
+			continue
+		bon = frappe.get_doc(pilot.PROPOSAL, result["proposal"])
+		if bon.receipt_analysis == job.name and frappe.has_permission(pilot.PROPOSAL, "read", doc=bon):
+			links.append({"bon": bon.name, **receipt_supplier.visible(result)})
+	return links
+
+
 def _progress(job):
 	return {
 		"name": job.name, "status": _status(job),
 		"total": job.total_receipts, "processed": job.processed_receipts,
 		"error": job.error_message, "issue_id": job.issue_id, "issue_url": _issue_link(job.issue_id),
+		"supplier_proposals": _supplier_links(job),
 	}
 
 
@@ -605,7 +642,7 @@ def list_uploads():
 		return []
 	jobs = frappe.get_all(JOB, filters={"upload": ["in", list(by_upload)]},
 		fields=["name", "upload", "proposal", "status", "total_receipts", "processed_receipts", "issue_id",
-			"error_message", "modified"], order_by="creation desc")
+			"error_message", "modified", "results"], order_by="creation desc")
 	for row in uploads:
 		row.jobs = []
 	for job in jobs:
@@ -624,6 +661,7 @@ def inbox_detail(proposal):
 	revisions = []
 	current_comparison = None
 	current_analysis = None
+	current_supplier = None
 	comparison_stale = False
 	current_center = receipt_evidence.cost_center(proposal)
 	jobs = frappe.get_all(JOB, filters={"upload": upload_doc.name, "proposal": proposal.name},
@@ -639,11 +677,13 @@ def inbox_detail(proposal):
 				merchant = snapshot.get("llm_lieferant")
 				visible = snapshot | {
 					"fields": snapshot["fields"] | {"lieferant": supplier.get("name", "")},
-					"lieferant_neu": {"supplier_name": merchant} if merchant and not stored_comparison.get("supplier") else None,
+					"lieferant_neu": {"supplier_name": merchant}
+					if merchant and not stored_comparison.get("supplier") and not result.get("supplier_proposal") else None,
 				}
 				stale = comparison is not None and result.get("comparison_cost_center") != current_center
 				revisions.append(visible | {"account_comparison": comparison, "comparison_stale": stale})
 				if snapshot["analysis"]["job"] == current_job.name:
+					current_supplier = receipt_supplier.visible(result)
 					comparison_stale = stale
 					current_comparison = None if stale else comparison
 					current_analysis = visible
@@ -651,16 +691,20 @@ def inbox_detail(proposal):
 		"original": upload_doc.file_url, "note": upload_doc.note, "job": _progress(current_job),
 		"revisions": revisions, "source": proposal.receipt_analysis,
 		"account_comparison": current_comparison, "comparison_stale": comparison_stale, "current_analysis": current_analysis,
+		"supplier_proposal": current_supplier,
 	}
 
 
 def require_bookable(proposal):
 	if not proposal.get("receipt_upload"):
 		return
-	status = frappe.db.get_value(JOB, proposal.receipt_analysis, "status")
+	job = frappe.get_doc(JOB, proposal.receipt_analysis)
 	analysis = _prior(proposal)
-	if status not in {"Done", "Questions"} or not analysis or analysis["job"] != proposal.receipt_analysis:
+	if job.status not in {"Done", "Questions", receipt_supplier.WAITING} or not analysis or analysis["job"] != proposal.receipt_analysis:
 		frappe.throw("Die aktuelle Bonanalyse muss zuerst abgeschlossen sein.")
+	for result in json.loads(job.results or "[]"):
+		if result["proposal"] == proposal.name and result.get("supplier_proposal") and result["supplier_state"] != "Succeeded":
+			frappe.throw("Bitte zuerst den Lieferantenvorschlag klären und den Paperclip-Auftrag fortsetzen.")
 	if analysis["question"]:
 		frappe.throw("Bitte den Zuschnitt oder die Aufteilung des Bons zuerst klären.")
 

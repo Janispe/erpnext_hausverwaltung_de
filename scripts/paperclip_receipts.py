@@ -16,16 +16,18 @@ DISPOSITIONS = {
 	"Questions": ("done", "Bonanalyse fertig mit Rückfragen in ERPNext."),
 	"Superseded": ("cancelled", "Durch eine neuere Rückfrage ersetzt."),
 	"AnalysisError": ("blocked", "Technischer Analysefehler. In ERPNext gespeicherte Bons bleiben erhalten."),
+	"WaitingForSupplier": ("blocked", "Lieferantenvorschlag in ERPNext prüfen und diesen Auftrag fortsetzen."),
 }
 
 
 def report_batch_status(paperclip, scope, agent_id, state):
 	status, comment = DISPOSITIONS[state]
 	payload = {"status": status, "comment": comment}
-	if state == "AnalysisError":
+	if state in {"AnalysisError", "WaitingForSupplier"}:
 		payload["unblockDescriptor"] = {
 			"owner": {"agentId": agent_id},
-			"action": "Analysefehler beheben und dieses Issue erneut starten.",
+			"action": ("Lieferantenvorschlag in ERPNext entscheiden und dieses Issue erneut starten."
+				if state == "WaitingForSupplier" else "Analysefehler beheben und dieses Issue erneut starten."),
 		}
 	paperclip.request("PATCH", f"/api/issues/{scope['issue_id']}", data=payload,
 		headers={"X-Paperclip-Run-Id": scope["run_id"]})

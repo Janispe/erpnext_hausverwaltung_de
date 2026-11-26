@@ -26,18 +26,21 @@ def _readable(access, doctype, name):
 	return bool(name and frappe.has_permission(doctype, "read", doc=name, user=access.user))
 
 
-def supplier(access, merchant):
+SUPPLIER_QUESTION = "Welcher aktive Lieferant ist diesem Händler eindeutig zugeordnet?"
+
+
+def supplier(access, merchant, *, lock=False):
 	if not merchant:
 		return {"match": None, "question": "Welcher Händler steht auf dem Bon?"}
 	rows = frappe.db.sql(
 		"""SELECT name, supplier_name FROM `tabSupplier`
 		WHERE disabled = 0 AND (name = %s OR supplier_name = %s)
-		ORDER BY name LIMIT 2""",
+		ORDER BY name LIMIT 2""" + (" FOR UPDATE" if lock else ""),
 		(merchant, merchant), as_dict=True,
 	)
 	if len(rows) == 1 and _readable(access, "Supplier", rows[0].name):
 		return {"match": rows[0], "question": ""}
-	return {"match": None, "question": "Welcher aktive Lieferant ist diesem Händler eindeutig zugeordnet?"}
+	return {"match": None, "question": SUPPLIER_QUESTION, "missing": not rows}
 
 
 def prior_receipts(access, merchant):

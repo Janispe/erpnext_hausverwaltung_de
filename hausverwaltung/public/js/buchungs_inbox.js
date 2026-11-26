@@ -39,9 +39,17 @@ function hv_receipt_progress(job) {
 		Queued: __("Wartet auf Zustellung"), DeliveryError: __("Zustellfehler"),
 		Dispatched: __("In Paperclip eingereiht"), Running: __("Analyse läuft"), Interrupted: __("Analyse unterbrochen"),
 		AnalysisError: __("Technischer Analysefehler"), Done: __("Fertig"), Questions: __("Fertig mit Rückfragen"),
+		WaitingForSupplier: __("Wartet auf Lieferantenvorschlag"),
 	};
 	const progress = job.total ? __(" · {0} von {1} bearbeitet", [job.processed, job.total]) : "";
 	return frappe.utils.escape_html((labels[job.status] || job.status) + progress);
+}
+
+function hv_receipt_supplier(supplier) {
+	const message = frappe.utils.escape_html(supplier.message);
+	if (!supplier.url) return message;
+	return `${message} · <a href="${frappe.utils.escape_html(supplier.url)}" target="_blank" rel="noopener">
+		${__("Vorschlag öffnen")} ↗</a>`;
 }
 
 function hv_receipt_paperclip(job) {
@@ -548,11 +556,13 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				batches.children("div").html(state.receipt_batches.map((upload) => `<p>
 					<a href="${escape(upload.file_url)}" target="_blank" rel="noopener">${escape(upload.original_filename)} ↗</a>
 					${upload.jobs.map((job) => `<br>${job.proposal ? escape(job.proposal) + " · " : ""}
-						${hv_receipt_progress(job)} · ${hv_receipt_paperclip(job)} ${escape(job.error || "")}`).join("")}
+						${hv_receipt_progress(job)} · ${hv_receipt_paperclip(job)} ${escape(job.error || "")}
+						${(job.supplier_proposals || []).map((supplier) => `<br>${escape(supplier.bon)} ·
+							${hv_receipt_supplier(supplier)}`).join("")}`).join("")}
 				</p>`).join(""));
 
 				const progress = new Map(state.receipt_batches.flatMap((upload) =>
-					upload.jobs.map((job) => [job.name, hv_receipt_progress(job)])
+					upload.jobs.map((job) => [job.name, JSON.stringify(job)])
 				));
 				const previous_rows = new Map(state.rows.map((r) => [r.name, r]));
 				for (const row of new_rows) {
@@ -560,7 +570,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 					if (!previous || previous.status !== row.status || previous.detail_version !== row.detail_version
 						|| (row.is_receipt_batch && state.full_cache[row.name]?.receipt_batch &&
 							progress.get(state.full_cache[row.name].receipt_batch.job.name)
-								!== hv_receipt_progress(state.full_cache[row.name].receipt_batch.job))
+								!== JSON.stringify(state.full_cache[row.name].receipt_batch.job))
 						|| (force_detail && row.name === state.selected_name)) {
 						delete state.full_cache[row.name];
 					}
@@ -713,8 +723,11 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		const approved = review?.status === "Approved";
 		const closed = ["Booked", "Cancelled"].includes(row.status);
 		const batch = full?.receipt_batch;
+		const supplier = batch?.supplier_proposal;
 		const can_book = row.status === "Ready" && (!row.is_receipt_batch ||
-			(batch && HV_RECEIPT_DONE.has(batch.job.status) && !data?.analysis?.question)) && (!row.is_receipt ||
+			(batch && (HV_RECEIPT_DONE.has(batch.job.status) || batch.job.status === "WaitingForSupplier")
+				&& (!supplier || supplier.status === "Succeeded" && data?.fields?.lieferant)
+				&& !data?.analysis?.question)) && (!row.is_receipt ||
 			(review && review.status !== "Succeeded" && receipt && !receipt.fragen.length && (!data?.waehrung || data.waehrung === "EUR")));
 		const can_skip = !row.is_receipt_batch && ["Pending", "Processing", "Ready"].includes(row.status);
 		const can_reactivate = !row.is_receipt_batch && ["Skipped", "Error"].includes(row.status);
@@ -781,6 +794,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 					${review?.status === "Stale" ? `<p>${__("Freigabe ungültig. Bitte die geänderten Buchungsdaten erneut prüfen.")}</p>` : ""}
 					${row.status === "Cancelled" ? `<p>${__("Rechnung oder Ausgleich storniert. Die ursprüngliche Buchung bleibt nachvollziehbar.")}</p>` : ""}
 					${batch ? hv_receipt_history(batch) : ""}
+					${supplier ? `<p>${hv_receipt_supplier(supplier)}</p>` : ""}
 					${batch?.comparison_stale ? `<p class="text-muted">${__(
 						"Kontierungsvergleich veraltet. Überarbeiten lassen, um die aktuelle Kostenstelle zu prüfen."
 					)}</p>` : ""}

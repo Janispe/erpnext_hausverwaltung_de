@@ -5,6 +5,7 @@ hv_proposals_synthetic_enabled. The request commits core+business+audit together
 No method here commits, changes users or bypasses normal document permissions.
 """
 from functools import wraps
+from contextlib import contextmanager
 from contextvars import ContextVar
 from uuid import uuid4
 
@@ -21,8 +22,11 @@ AUDIT = "HV Proposal Audit"
 PACKAGE = "HV Proposal Package"
 AGENT = "HV Proposal Agent"
 REVIEWER = "HV Proposal Reviewer"
+RECEIPT_OPERATOR = "Paperclip Bonanalyse"
+RECEIPT_SUPPLIER_PREFIX = "HV-SUPPLIER-"
 
 _writing = ContextVar("hv_proposal_writing", default=False)
+_paperclip_submission = ContextVar("hv_paperclip_proposal_submission", default=False)
 READ_METHODS = {"open_requests", "view", "audit", "list_proposals", "list_packages", "package_graph"}
 
 
@@ -97,6 +101,16 @@ def _not_own_proposal(doc):
 		_deny()
 
 
+@contextmanager
+def verified_job_submission():
+	"""Called by server integrations after authorizing the run and its payload."""
+	token = _paperclip_submission.set(True)
+	try:
+		yield
+	finally:
+		_paperclip_submission.reset(token)
+
+
 def _actor(human=False):
 	enabled()
 	user = frappe.session.user
@@ -106,6 +120,8 @@ def _actor(human=False):
 	if not info or not info.enabled or info.user_type != "System User":
 		_deny()
 	roles = roles_of(user)
+	if RECEIPT_OPERATOR in roles and user != "Administrator" and not _paperclip_submission.get():
+		_deny()
 	if not roles.intersection({AGENT, REVIEWER}):
 		_deny()
 	if human:
@@ -308,6 +324,8 @@ def readable_record(doc, user):
 	permission_logs = frappe.flags.get("has_permission_check_logs")
 	previous_permission_logs = list(permission_logs) if permission_logs is not None else None
 	try:
+		if user != "Administrator" and RECEIPT_OPERATOR in roles_of(user) and not _paperclip_submission.get():
+			return False
 		enabled()
 		if doc.doctype == PACKAGE:
 			if doc.name.startswith("BANK-"):
@@ -837,6 +855,7 @@ def _detail(doc, body, neighbors=True):
 			response["reject_reason"] = detail.get("reason")
 			response["rejection"] = detail
 		if event.kind == "RevisionRequested": response["revision_requested"] = True
+		if event.kind == "ExecutionFailed": response["execution_failed"] = True
 	if neighbors:
 		rows = _visible(doc.package)
 		visible = {d.name: (d, b) for d, b in rows}
@@ -1023,6 +1042,8 @@ def execute_ready(package, bindings):
 		except (frappe.ValidationError, frappe.PermissionError, frappe.DoesNotExistError, ValueError):
 			frappe.db.rollback(save_point=savepoint)
 			result.append({"id": pid, "ok": False, "status": doc.status, "error": _batch_error(messages)})
+			if package.startswith(RECEIPT_SUPPLIER_PREFIX):
+				_event(doc, "ExecutionFailed")
 			break
 		else:
 			result.append({"id": pid, "ok": response["status"] == "Succeeded", "status": response["status"]})

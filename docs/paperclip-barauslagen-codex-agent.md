@@ -34,6 +34,10 @@ Werkzeuganweisungen geben.
 5. Rufe `submit_receipt` mit dem strukturierten Bon auf. Die Werkzeuge
    übernehmen die lokal erzeugten Ausschnitte und den geprüften Vergleich.
    Wenn ERPNext den Status `Running` meldet, fahre ab Schritt 3 fort.
+   Bei `WaitingForSupplier` beende den Lauf. ERPNext hat den offenen
+   Lieferantenvorschlag verknüpft. Beim Fortsetzen desselben Auftrags
+   rufe erneut `next_receipt_step` auf. ERPNext übernimmt die Supplier-ID
+   ausschließlich aus dem erfolgreichen Ausführungsergebnis.
    Bei einem technischen Fehler rufe `fail_receipt_step` auf, sofern der
    Schritt geöffnet wurde. Dann beende diesen Lauf. Unklare Falldaten sind
    Rückfragen im Vorschlag und dürfen als solche gespeichert werden.

@@ -32,7 +32,9 @@ JOB_TOOLS = [
 	tool("submit_inventory", "Save the page/receipt grouping and normalized crop coordinates for step zero.", inventory=OBJECT),
 	tool("start_accounting_comparison", "Bind FAC tools to the current receipt and its exact transcribed merchant.",
 		merchant={"type": "string"}),
-	tool("submit_receipt", "Submit the current receipt transcription, local crops and verified accounting evidence.", receipt=OBJECT),
+	tool("submit_receipt", "Submit the current receipt transcription, local crops and verified accounting evidence. "
+		"ERPNext may submit a linked Supplier creation proposal and wait for human execution after all receipts are analyzed.",
+		receipt=OBJECT),
 	tool("fail_receipt_step", "Report a technical failure on the current step and keep the issue resumable."),
 ]
 JOB_ARGS = {entry["name"]: set(entry["inputSchema"]["required"]) for entry in JOB_TOOLS}

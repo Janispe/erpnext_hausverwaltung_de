@@ -303,6 +303,14 @@ def revise_doc(
 	return _compact_proposal(result)
 
 
+def submit_for_verified_job(**arguments):
+	"""Reuse the FAC submit tool with a server-authorized Paperclip job payload."""
+	from hausverwaltung.proposals import frappe_service
+
+	with frappe_service.verified_job_submission():
+		return submit_doc(**arguments)
+
+
 def list_packages(*, status=None, agent=None, start=0, limit=20):
 	from hausverwaltung.proposals import frappe_service
 

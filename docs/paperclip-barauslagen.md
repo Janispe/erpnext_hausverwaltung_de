@@ -146,6 +146,25 @@ Vorschläge, geprüfte Quellen und Rückfragen stehen in der Buchungs-Inbox.
 Bei `blocked` den technischen Fehler beheben und in Paperclip dasselbe
 Issue fortsetzen. ERPNext setzt beim ersten ausstehenden Bon fort.
 
+Für den Lieferantenvorschlag auf der isolierten Testsite zusätzlich
+`hv_receipt_supplier_proposals=1` und `hv_proposals_enabled=1` setzen.
+Dem separaten API-Benutzer zusätzlich `HV Proposal Agent` und über die
+Rollenkonfiguration ausschließlich Leserechte auf `Supplier` geben.
+Der Vorschlagsdienst akzeptiert für `Paperclip Bonanalyse` ausschließlich
+serverseitig autorisierte Aufrufe aus dem verifizierten Auftragskontext.
+`submit_receipt` übernimmt den Händlernamen aus der validierten Bonanalyse
+und verwendet das FAC-Vorschlagswerkzeug. Eindeutige Stammdaten haben
+Vorrang. Mehrdeutige Treffer erscheinen als Rückfrage.
+
+Unter **Bon-Uploads** den Lieferantenvorschlag öffnen. Die Sachbearbeitung
+prüft ihn in **Aktionsvorschläge**, gibt ihn frei und führt ihn aus.
+Danach das ursprüngliche Paperclip-Issue fortsetzen. Der Mitarbeiter
+übernimmt das erfolgreiche Ausführungsergebnis in den betroffenen Bon.
+Bis zur Entscheidung blockiert der Auftrag ohne Timer. Nach einem
+Ausführungsfehler zeigt die Inbox den Fehlerstatus. Nach Ablehnung und
+Wiederaufnahme bleibt der betroffene Bon zur Klärung markiert. Die
+Buchungsfreigabe erfolgt anschließend separat in **Buchungs-Inbox**.
+
 Für einen synthetischen Inferenzlauf `CODEX_ROLLOUT_TRACE_ROOT` vorübergehend
 auf ein privates Verzeichnis setzen. Vergleiche die Zell-ID der
 `tool_call_started`-Ereignisse mit `code_cell_started` und
